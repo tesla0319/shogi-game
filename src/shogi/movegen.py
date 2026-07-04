@@ -1,4 +1,4 @@
-"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香・桂・銀・金・玉・飛のみ。
+"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香・桂・銀・金・玉・飛・角のみ。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
@@ -223,3 +223,23 @@ def generate_rook_moves(board: Board, file: int, rank: int) -> list[Move]:
         raise ValueError(f"({file}, {rank}) に飛車がありません: {piece!r}")
 
     return _sliding_moves(board, file, rank, piece.color, _ROOK_DIRECTIONS)
+
+
+# 角行の走り4方向（斜め）。file の小さい側から、同じ file 側では rank の小さい側から
+_BISHOP_DIRECTIONS = [(-1, -1), (-1, +1), (+1, -1), (+1, +1)]
+
+
+def generate_bishop_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの角行の疑似合法手を返す。
+
+    斜め4方向へ、盤端または駒に当たるまで進める（全方向対称のため
+    先手・後手で同じ）。味方駒の手前で停止し、そのマスは含めない。
+    相手駒のマスで停止し、そのマスは含める（その先へは進めない）。
+    指定マスが空きマス、または角行以外の駒の場合は ValueError を送出する。
+    成って馬になった後の動きは成駒対応の Phase で扱う。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.BISHOP:
+        raise ValueError(f"({file}, {rank}) に角行がありません: {piece!r}")
+
+    return _sliding_moves(board, file, rank, piece.color, _BISHOP_DIRECTIONS)

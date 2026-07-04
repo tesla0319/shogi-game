@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香、2c: 桂、2d: 銀、2e: 金、2f: 玉、2g: 飛）。
+"""疑似合法手生成のテスト（SHOGI-2a〜2h: 歩・香・桂・銀・金・玉・飛・角）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -10,6 +10,7 @@ from shogi.board import Board
 from shogi.initial_position import create_hirate_board
 from shogi.move import Move
 from shogi.movegen import (
+    generate_bishop_moves,
     generate_gold_moves,
     generate_king_moves,
     generate_knight_moves,
@@ -855,3 +856,136 @@ class Test飛車の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_rook_moves(Board(), 10, 10)
+
+
+class Test角行の走り:
+    def test_中央から斜め4方向へ盤端まで走る(self):
+        # 空盤の5五の角 → 各斜め4マスずつの計16手
+        # 並び: file小側(rank小→大) → file大側(rank小→大)、各方向とも近い順
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.BISHOP)))
+        assert generate_bishop_moves(board, 5, 5) == [
+            # file小・rank小方向（4四 → 一一）
+            Move(5, 5, 4, 4),
+            Move(5, 5, 3, 3),
+            Move(5, 5, 2, 2),
+            Move(5, 5, 1, 1),
+            # file小・rank大方向（4六 → 一九）
+            Move(5, 5, 4, 6),
+            Move(5, 5, 3, 7),
+            Move(5, 5, 2, 8),
+            Move(5, 5, 1, 9),
+            # file大・rank小方向（6四 → 九一）
+            Move(5, 5, 6, 4),
+            Move(5, 5, 7, 3),
+            Move(5, 5, 8, 2),
+            Move(5, 5, 9, 1),
+            # file大・rank大方向（6六 → 九九）
+            Move(5, 5, 6, 6),
+            Move(5, 5, 7, 7),
+            Move(5, 5, 8, 8),
+            Move(5, 5, 9, 9),
+        ]
+
+    def test_後手の角も同じ動きになる(self):
+        # 角は全方向対称なので手番で動きが変わらない
+        black = board_with((5, 5, Piece(Color.BLACK, PieceType.BISHOP)))
+        white = board_with((5, 5, Piece(Color.WHITE, PieceType.BISHOP)))
+        assert generate_bishop_moves(black, 5, 5) == generate_bishop_moves(white, 5, 5)
+
+    def test_一一の角にいる角行は対角線1本だけ(self):
+        board = board_with((1, 1, Piece(Color.BLACK, PieceType.BISHOP)))
+        assert generate_bishop_moves(board, 1, 1) == [
+            Move(1, 1, d, d) for d in range(2, 10)
+        ]
+
+    def test_盤の辺にいる角行は2方向だけ残る(self):
+        # 1筋の5段目 → file小の2方向は盤外、file大の2方向のみ
+        board = board_with((1, 5, Piece(Color.BLACK, PieceType.BISHOP)))
+        assert generate_bishop_moves(board, 1, 5) == [
+            Move(1, 5, 2, 4),
+            Move(1, 5, 3, 3),
+            Move(1, 5, 4, 2),
+            Move(1, 5, 5, 1),
+            Move(1, 5, 2, 6),
+            Move(1, 5, 3, 7),
+            Move(1, 5, 4, 8),
+            Move(1, 5, 5, 9),
+        ]
+
+
+class Test角行の停止:
+    def test_味方駒の手前で止まりそのマスには進めない(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.BISHOP)),
+            (3, 3, Piece(Color.BLACK, PieceType.PAWN)),  # file小・rank小方向の味方
+        )
+        moves = generate_bishop_moves(board, 5, 5)
+        assert Move(5, 5, 4, 4) in moves  # 手前までは進める
+        assert Move(5, 5, 3, 3) not in moves  # 味方駒のマスは不可
+        assert Move(5, 5, 2, 2) not in moves  # その先も不可
+
+    def test_相手駒のマスには進めるがその先には進めない(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.BISHOP)),
+            (7, 7, Piece(Color.WHITE, PieceType.PAWN)),  # file大・rank大方向の相手
+        )
+        moves = generate_bishop_moves(board, 5, 5)
+        assert Move(5, 5, 6, 6) in moves
+        assert Move(5, 5, 7, 7) in moves  # 相手駒を取る手
+        assert Move(5, 5, 8, 8) not in moves  # 相手駒の先へは進めない
+        assert Move(5, 5, 9, 9) not in moves
+
+    def test_複数方向のブロッカーが混在しても正しい(self):
+        # 4方向: 味方（3三）/ 相手（3七）/ 相手（6四）/ 遮り無し
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.BISHOP)),
+            (3, 3, Piece(Color.BLACK, PieceType.PAWN)),
+            (3, 7, Piece(Color.WHITE, PieceType.PAWN)),
+            (6, 4, Piece(Color.WHITE, PieceType.SILVER)),
+        )
+        assert generate_bishop_moves(board, 5, 5) == [
+            Move(5, 5, 4, 4),  # 味方の手前まで
+            Move(5, 5, 4, 6),  # 相手のマスまで
+            Move(5, 5, 3, 7),
+            Move(5, 5, 6, 4),  # 隣が相手: そのマスだけ
+            Move(5, 5, 6, 6),  # 遮り無し: 盤端まで
+            Move(5, 5, 7, 7),
+            Move(5, 5, 8, 8),
+            Move(5, 5, 9, 9),
+        ]
+
+    def test_斜め四方を隣接する味方駒に囲まれると候補なし(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.BISHOP)),
+            (4, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (4, 6, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 6, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_bishop_moves(board, 5, 5) == []
+
+
+class Test角行の平手初期局面:
+    def test_先手の8八角は味方に囲まれて動けない(self):
+        # 斜め4方向の隣がすべて味方（7七歩・7九銀・9七歩・9九香）
+        board = create_hirate_board()
+        assert generate_bishop_moves(board, 8, 8) == []
+
+    def test_後手の2二角も味方に囲まれて動けない(self):
+        board = create_hirate_board()
+        assert generate_bishop_moves(board, 2, 2) == []
+
+
+class Test角行の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_bishop_moves(Board(), 5, 5)
+
+    def test_角行以外の駒を指定するとValueError(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.ROOK)))
+        with pytest.raises(ValueError):
+            generate_bishop_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_bishop_moves(Board(), 0, 10)
