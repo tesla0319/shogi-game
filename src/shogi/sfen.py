@@ -45,6 +45,8 @@ def board_to_sfen(board: Board) -> str:
     """盤面を SFEN の盤面部の文字列にして返す。
 
     盤面部のみを返す（手番・持ち駒・手数は含めない）。
+    連続する空きマスは必ず1つの数字にまとめるため、出力に数字が連続することはない
+    （board_from_sfen が受理する正規形と一致する）。
     例: 平手初期局面 → "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL"
     """
     rows = []
@@ -79,6 +81,7 @@ def board_from_sfen(sfen: str) -> Board:
     不正な入力は ValueError を送出する:
     - "/" 区切りの段数が9でない
     - 1つの段のマス数（駒 + 空きマス数の合計）が9でない
+    - 空きマス数の数字が連続している（例: "45"。正規の SFEN では "9" と書くため）
     - 許可されていない文字（駒文字・1〜9・"+" 以外、"0"、成れない駒への "+" など）
     """
     rows = sfen.split("/")
@@ -94,12 +97,17 @@ def _parse_rank_into(board: Board, rank: int, row: str) -> None:
     """SFEN の1段分の文字列を解釈し、board の rank 段目に駒を配置する。"""
     file = BOARD_SIZE  # file=9（段の先頭）から 1 に向かって埋めていく
     i = 0
+    prev_was_digit = False  # 直前のトークンが空きマス数の数字だったか
     while i < len(row):
         char = row[i]
         if char in _EMPTY_COUNT_DIGITS:
+            if prev_was_digit:
+                raise ValueError(f"{rank}段目に連続する数字があります: {row!r}")
+            prev_was_digit = True
             file -= int(char)  # 空きマスはスキップ（Board の初期値が None のため）
             i += 1
             continue
+        prev_was_digit = False
         if char == "+":
             letter = row[i : i + 2]  # "+P" のような2文字で1駒
             i += 2

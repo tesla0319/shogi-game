@@ -165,13 +165,31 @@ class Test読み込み異常系:
             "PPPPPPPP",  # マス数不足（駒8枚）
             "PPPPPPPPPP",  # マス数過多（駒10枚）
             "5P4",  # マス数過多（5+1+4=10）
-            "55",  # マス数過多（数字の連続で5+5=10）
             "9P",  # 空き9マスの後に駒（10マス目）
         ],
     )
     def test_1段のマス数が9でなければValueError(self, bad_row):
         with pytest.raises(ValueError):
             board_from_sfen(f"{bad_row}/9/9/9/9/9/9/9/9")
+
+    @pytest.mark.parametrize(
+        "bad_row",
+        [
+            "45",  # 合計は9マスだが数字が連続している（正規形は "9"）
+            "55",  # 数字の連続（合計も9でない）
+            "P44",  # 駒の後で数字が連続
+            "234",  # 3つ以上の連続
+            "1P34P",  # 段の途中の連続
+        ],
+    )
+    def test_連続する数字を含む段はValueError(self, bad_row):
+        with pytest.raises(ValueError):
+            board_from_sfen(f"{bad_row}/9/9/9/9/9/9/9/9")
+
+    def test_駒を挟んだ数字は連続とみなされない(self):
+        # "4P4" は数字が2回現れるが間に駒があるため正規の形
+        board = board_from_sfen("4P4/9/9/9/9/9/9/9/9")
+        assert board.get_piece(5, 1) == Piece(Color.BLACK, PieceType.PAWN)
 
     @pytest.mark.parametrize(
         "bad_row",
