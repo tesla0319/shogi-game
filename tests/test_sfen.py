@@ -1,15 +1,23 @@
-"""SFEN 盤面部出力のテスト（SHOGI-1e-1）。
+"""SFEN 盤面部の出力（SHOGI-1e-1）と読み込み（SHOGI-1e-2）のテスト。
 
-board_to_sfen の空きマス圧縮・駒文字化・段/筋の並び順を検証する。
-SFEN の読み込み・手番・持ち駒・手数は対象外。
+手番・持ち駒・手数を含む完全な SFEN は対象外。
 """
 
 import pytest
 
-from shogi.board import Board
+from shogi.board import BOARD_SIZE, Board
 from shogi.initial_position import create_hirate_board
 from shogi.piece import Color, Piece, PieceType
-from shogi.sfen import board_to_sfen
+from shogi.sfen import board_from_sfen, board_to_sfen
+
+
+def assert_same_board(actual: Board, expected: Board) -> None:
+    """2つの盤面の全81マスが一致することを検証する。"""
+    for file in range(1, BOARD_SIZE + 1):
+        for rank in range(1, BOARD_SIZE + 1):
+            assert actual.get_piece(file, rank) == expected.get_piece(file, rank), (
+                f"({file}, {rank}) が一致しない"
+            )
 
 # 平手初期局面の盤面部。USI 仕様書等で公知の文字列をそのまま書き写している
 HIRATE_BOARD_SFEN = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL"
@@ -96,3 +104,88 @@ class Test空きマス圧縮と並び順:
         rows = board_to_sfen(board).split("/")
         assert rows[0] == "k8"
         assert rows[8] == "K8"
+
+
+class Test読み込み正常系:
+    def test_空盤を復元できる(self):
+        assert_same_board(board_from_sfen("9/9/9/9/9/9/9/9/9"), Board())
+
+    def test_平手初期局面を復元できる(self):
+        # 復元結果が「手動構築（create_hirate_board）した盤面」と全マス一致すること
+        board = board_from_sfen(HIRATE_BOARD_SFEN)
+        assert_same_board(board, create_hirate_board())
+
+    @pytest.mark.parametrize(
+        ("piece_type", "black_letter", "white_letter"), Test駒文字.LETTER_CASES
+    )
+    def test_全14駒種を先手後手とも復元できる(self, piece_type, black_letter, white_letter):
+        board = board_from_sfen(f"{black_letter}8/9/9/9/9/9/9/9/9")
+        assert board.get_piece(9, 1) == Piece(Color.BLACK, piece_type)
+
+        board = board_from_sfen(f"{white_letter}8/9/9/9/9/9/9/9/9")
+        assert board.get_piece(9, 1) == Piece(Color.WHITE, piece_type)
+
+    def test_段の途中の駒が正しい筋に置かれる(self):
+        # "4P4" → file=5 に先手歩。筋の数え方（9から左→右）の取り違え検出
+        board = board_from_sfen("9/9/9/9/4P4/9/9/9/9")
+        assert board.get_piece(5, 5) == Piece(Color.BLACK, PieceType.PAWN)
+        assert board.get_piece(4, 5) is None
+        assert board.get_piece(6, 5) is None
+
+    @pytest.mark.parametrize(
+        "sfen",
+        [
+            "9/9/9/9/9/9/9/9/9",
+            HIRATE_BOARD_SFEN,
+            "k8/1+P7/9/9/4+b4/9/9/7r1/K8",  # 成駒と後手駒が混ざった局面
+        ],
+    )
+    def test_読み込んで書き出すと元の文字列に戻る(self, sfen):
+        assert board_to_sfen(board_from_sfen(sfen)) == sfen
+
+
+class Test読み込み異常系:
+    @pytest.mark.parametrize(
+        "sfen",
+        [
+            "",  # 空文字列
+            "9/9/9/9/9/9/9/9",  # 段数不足（8段）
+            "9/9/9/9/9/9/9/9/9/9",  # 段数過多（10段）
+            "9//9/9/9/9/9/9/9",  # 空の段（段数は9だがマス数0）
+        ],
+    )
+    def test_段数や段の形が不正ならValueError(self, sfen):
+        with pytest.raises(ValueError):
+            board_from_sfen(sfen)
+
+    @pytest.mark.parametrize(
+        "bad_row",
+        [
+            "8",  # マス数不足（8マス）
+            "PPPPPPPP",  # マス数不足（駒8枚）
+            "PPPPPPPPPP",  # マス数過多（駒10枚）
+            "5P4",  # マス数過多（5+1+4=10）
+            "55",  # マス数過多（数字の連続で5+5=10）
+            "9P",  # 空き9マスの後に駒（10マス目）
+        ],
+    )
+    def test_1段のマス数が9でなければValueError(self, bad_row):
+        with pytest.raises(ValueError):
+            board_from_sfen(f"{bad_row}/9/9/9/9/9/9/9/9")
+
+    @pytest.mark.parametrize(
+        "bad_row",
+        [
+            "X8",  # 駒として存在しない文字
+            "08",  # 空きマス数に 0 は使えない
+            "５8",  # 全角数字
+            "+G8",  # 金は成れない
+            "+K8",  # 玉は成れない
+            "+58",  # "+" の後が駒文字でない
+            "8+",  # 段末の孤立した "+"
+            "P 7P",  # 空白文字
+        ],
+    )
+    def test_不正な文字が含まれていればValueError(self, bad_row):
+        with pytest.raises(ValueError):
+            board_from_sfen(f"{bad_row}/9/9/9/9/9/9/9/9")

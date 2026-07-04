@@ -1,7 +1,8 @@
 """SFEN 表記の入出力。
 
 このモジュールに SFEN 関連の変換を集約する（Board は表記を知らないままにする）。
-SHOGI-1e-1 では「盤面部の出力」のみ。読み込み・手番・持ち駒・手数は後続で扱う。
+現在は「盤面部」の出力（board_to_sfen）と読み込み（board_from_sfen）のみ。
+手番・持ち駒・手数を含む完全な SFEN は Position 概念の導入後に扱う。
 
 SFEN 盤面部の規則:
 - 段（rank）1 から 9 の順に、各段を "/" で区切って並べる
@@ -12,7 +13,7 @@ SFEN 盤面部の規則:
 """
 
 from shogi.board import BOARD_SIZE, Board
-from shogi.piece import Color, PieceType
+from shogi.piece import Color, Piece, PieceType
 
 # 駒種 → SFEN 文字（先手側・大文字）。後手は小文字に変換して使う
 _SFEN_LETTERS = {
@@ -31,6 +32,13 @@ _SFEN_LETTERS = {
     PieceType.HORSE: "+B",
     PieceType.DRAGON: "+R",
 }
+
+
+# SFEN 文字 → 駒種（_SFEN_LETTERS の逆引き）
+_LETTER_TO_PIECE_TYPE = {letter: piece_type for piece_type, letter in _SFEN_LETTERS.items()}
+
+# 空きマス数として許す文字。str.isdigit() は全角数字（"５" など）も True になるため使わない
+_EMPTY_COUNT_DIGITS = "123456789"
 
 
 def board_to_sfen(board: Board) -> str:
@@ -62,3 +70,50 @@ def _rank_to_sfen(board: Board, rank: int) -> str:
     if empty_count > 0:  # 段の末尾（file=1 側）が空きマスで終わる場合
         row += str(empty_count)
     return row
+
+
+def board_from_sfen(sfen: str) -> Board:
+    """SFEN の盤面部の文字列から Board を復元して返す。
+
+    盤面部のみを受け取る（手番・持ち駒・手数を含む完全な SFEN は対象外）。
+    不正な入力は ValueError を送出する:
+    - "/" 区切りの段数が9でない
+    - 1つの段のマス数（駒 + 空きマス数の合計）が9でない
+    - 許可されていない文字（駒文字・1〜9・"+" 以外、"0"、成れない駒への "+" など）
+    """
+    rows = sfen.split("/")
+    if len(rows) != BOARD_SIZE:
+        raise ValueError(f"段数が{BOARD_SIZE}ではありません: {len(rows)}段 ({sfen!r})")
+    board = Board()
+    for rank, row in enumerate(rows, start=1):
+        _parse_rank_into(board, rank, row)
+    return board
+
+
+def _parse_rank_into(board: Board, rank: int, row: str) -> None:
+    """SFEN の1段分の文字列を解釈し、board の rank 段目に駒を配置する。"""
+    file = BOARD_SIZE  # file=9（段の先頭）から 1 に向かって埋めていく
+    i = 0
+    while i < len(row):
+        char = row[i]
+        if char in _EMPTY_COUNT_DIGITS:
+            file -= int(char)  # 空きマスはスキップ（Board の初期値が None のため）
+            i += 1
+            continue
+        if char == "+":
+            letter = row[i : i + 2]  # "+P" のような2文字で1駒
+            i += 2
+        else:
+            letter = char
+            i += 1
+        piece_type = _LETTER_TO_PIECE_TYPE.get(letter.upper())
+        if piece_type is None:
+            raise ValueError(f"{rank}段目に不正な文字があります: {letter!r} ({row!r})")
+        if file < 1:
+            raise ValueError(f"{rank}段目のマス数が{BOARD_SIZE}を超えています: {row!r}")
+        # 駒の手番は文字の大小で決まる（大文字=先手、小文字=後手）
+        color = Color.BLACK if letter[-1].isupper() else Color.WHITE
+        board.set_piece(file, rank, Piece(color, piece_type))
+        file -= 1
+    if file != 0:
+        raise ValueError(f"{rank}段目のマス数が{BOARD_SIZE}ではありません: {row!r}")
