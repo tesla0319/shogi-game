@@ -1,4 +1,4 @@
-"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香車・桂馬・銀将・金将・玉将のみ。
+"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香・桂・銀・金・玉・飛のみ。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
@@ -35,6 +35,34 @@ def _step_moves(
         if target is not None and target.color is color:
             continue  # 味方駒のあるマス
         moves.append(Move(file, rank, to_file, to_rank))
+    return moves
+
+
+def _sliding_moves(
+    board: Board,
+    file: int,
+    rank: int,
+    color: Color,
+    directions: list[tuple[int, int]],
+) -> list[Move]:
+    """走り駒の候補を返す。方向ごとに遮られるまで進む（各方向とも近い順）。
+
+    それぞれの方向 (file差分, rank差分) について、盤外に出る手前で停止する。
+    味方駒の手前で停止し、そのマスは含めない。相手駒のマスで停止し、
+    そのマスは含める（取る手になる）。香車の走りと同じ規則の多方向版。
+    """
+    moves = []
+    for dfile, drank in directions:
+        to_file, to_rank = file + dfile, rank + drank
+        while 1 <= to_file <= BOARD_SIZE and 1 <= to_rank <= BOARD_SIZE:
+            target = board.get_piece(to_file, to_rank)
+            if target is not None and target.color is color:
+                break  # 味方駒の手前で停止（そのマスは含めない）
+            moves.append(Move(file, rank, to_file, to_rank))
+            if target is not None:
+                break  # 相手駒のマスで停止（そのマスまでは含める）
+            to_file += dfile
+            to_rank += drank
     return moves
 
 
@@ -175,3 +203,23 @@ def generate_king_moves(board: Board, file: int, rank: int) -> list[Move]:
         raise ValueError(f"({file}, {rank}) に玉将がありません: {piece!r}")
 
     return _step_moves(board, file, rank, piece.color, _KING_OFFSETS)
+
+
+# 飛車の走り4方向。縦（rank の小さい側 → 大きい側）→ 横（file の小さい側 → 大きい側）
+_ROOK_DIRECTIONS = [(0, -1), (0, +1), (-1, 0), (+1, 0)]
+
+
+def generate_rook_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの飛車の疑似合法手を返す。
+
+    縦横4方向へ、盤端または駒に当たるまで進める（全方向対称のため
+    先手・後手で同じ）。味方駒の手前で停止し、そのマスは含めない。
+    相手駒のマスで停止し、そのマスは含める（その先へは進めない）。
+    指定マスが空きマス、または飛車以外の駒の場合は ValueError を送出する。
+    成って竜になった後の動きは成駒対応の Phase で扱う。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.ROOK:
+        raise ValueError(f"({file}, {rank}) に飛車がありません: {piece!r}")
+
+    return _sliding_moves(board, file, rank, piece.color, _ROOK_DIRECTIONS)

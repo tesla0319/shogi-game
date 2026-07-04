@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香、2c: 桂、2d: 銀、2e: 金、2f: 玉）。
+"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香、2c: 桂、2d: 銀、2e: 金、2f: 玉、2g: 飛）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -15,6 +15,7 @@ from shogi.movegen import (
     generate_knight_moves,
     generate_lance_moves,
     generate_pawn_moves,
+    generate_rook_moves,
     generate_silver_moves,
 )
 from shogi.piece import Color, Piece, PieceType
@@ -727,3 +728,130 @@ class Test玉将の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_king_moves(Board(), 0, 5)
+
+
+class Test飛車の走り:
+    def test_中央から縦横4方向へ盤端まで走る(self):
+        # 空盤の5五の飛車 → 縦8マス + 横8マスの計16手
+        # 並び: 縦(rank小→大) → 横(file小→大)、各方向とも近い順
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.ROOK)))
+        assert generate_rook_moves(board, 5, 5) == [
+            # 奥方向（rank 4→1）
+            Move(5, 5, 5, 4),
+            Move(5, 5, 5, 3),
+            Move(5, 5, 5, 2),
+            Move(5, 5, 5, 1),
+            # 手前方向（rank 6→9）
+            Move(5, 5, 5, 6),
+            Move(5, 5, 5, 7),
+            Move(5, 5, 5, 8),
+            Move(5, 5, 5, 9),
+            # file の小さい方向（4→1）
+            Move(5, 5, 4, 5),
+            Move(5, 5, 3, 5),
+            Move(5, 5, 2, 5),
+            Move(5, 5, 1, 5),
+            # file の大きい方向（6→9）
+            Move(5, 5, 6, 5),
+            Move(5, 5, 7, 5),
+            Move(5, 5, 8, 5),
+            Move(5, 5, 9, 5),
+        ]
+
+    def test_後手の飛車も同じ動きになる(self):
+        # 飛車は全方向対称なので手番で動きが変わらない
+        black = board_with((5, 5, Piece(Color.BLACK, PieceType.ROOK)))
+        white = board_with((5, 5, Piece(Color.WHITE, PieceType.ROOK)))
+        assert generate_rook_moves(black, 5, 5) == generate_rook_moves(white, 5, 5)
+
+    def test_角にいる飛車は2方向だけ残り盤端で止まる(self):
+        # 一一の飛車 → 手前方向8マス + file大方向8マスの計16手（盤外の手が出ない）
+        board = board_with((1, 1, Piece(Color.BLACK, PieceType.ROOK)))
+        destinations = {
+            (move.to_file, move.to_rank) for move in generate_rook_moves(board, 1, 1)
+        }
+        assert destinations == {(1, r) for r in range(2, 10)} | {
+            (f, 1) for f in range(2, 10)
+        }
+
+
+class Test飛車の停止:
+    def test_味方駒の手前で止まりそのマスには進めない(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.ROOK)),
+            (5, 2, Piece(Color.BLACK, PieceType.PAWN)),  # 奥方向の味方
+        )
+        moves = generate_rook_moves(board, 5, 5)
+        assert Move(5, 5, 5, 3) in moves  # 手前までは進める
+        assert Move(5, 5, 5, 2) not in moves  # 味方駒のマスは不可
+        assert Move(5, 5, 5, 1) not in moves  # その先も不可
+
+    def test_相手駒のマスには進めるがその先には進めない(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.ROOK)),
+            (5, 7, Piece(Color.WHITE, PieceType.PAWN)),  # 手前方向の相手
+        )
+        moves = generate_rook_moves(board, 5, 5)
+        assert Move(5, 5, 5, 6) in moves
+        assert Move(5, 5, 5, 7) in moves  # 相手駒を取る手
+        assert Move(5, 5, 5, 8) not in moves  # 相手駒の先へは進めない
+        assert Move(5, 5, 5, 9) not in moves
+
+    def test_複数方向のブロッカーが混在しても正しい(self):
+        # 奥: 味方（5三）、手前: 相手（5七）、file小: 味方（3五）、file大: 遮り無し
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.ROOK)),
+            (5, 3, Piece(Color.BLACK, PieceType.PAWN)),
+            (5, 7, Piece(Color.WHITE, PieceType.PAWN)),
+            (3, 5, Piece(Color.BLACK, PieceType.SILVER)),
+        )
+        assert generate_rook_moves(board, 5, 5) == [
+            Move(5, 5, 5, 4),  # 奥: 味方の手前まで
+            Move(5, 5, 5, 6),  # 手前: 相手のマスまで
+            Move(5, 5, 5, 7),
+            Move(5, 5, 4, 5),  # file小: 味方の手前まで
+            Move(5, 5, 6, 5),  # file大: 盤端まで
+            Move(5, 5, 7, 5),
+            Move(5, 5, 8, 5),
+            Move(5, 5, 9, 5),
+        ]
+
+    def test_四方を隣接する味方駒に囲まれると候補なし(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.ROOK)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (5, 6, Piece(Color.BLACK, PieceType.PAWN)),
+            (4, 5, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 5, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_rook_moves(board, 5, 5) == []
+
+
+class Test飛車の平手初期局面:
+    def test_先手の2八飛は横に6マス動ける(self):
+        # 縦は2七の歩と2九の桂（ともに味方）に塞がれ、横は1八と3八〜7八
+        # （8八の角は味方なので手前まで）
+        board = create_hirate_board()
+        assert generate_rook_moves(board, 2, 8) == [
+            Move(2, 8, 1, 8),
+            Move(2, 8, 3, 8),
+            Move(2, 8, 4, 8),
+            Move(2, 8, 5, 8),
+            Move(2, 8, 6, 8),
+            Move(2, 8, 7, 8),
+        ]
+
+
+class Test飛車の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_rook_moves(Board(), 5, 5)
+
+    def test_飛車以外の駒を指定するとValueError(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.LANCE)))
+        with pytest.raises(ValueError):
+            generate_rook_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_rook_moves(Board(), 10, 10)
