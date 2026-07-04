@@ -1,0 +1,4 @@
+# pytest が src/ レイアウトのパッケージを import できるようにする最小設定
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
