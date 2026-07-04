@@ -1,6 +1,6 @@
-"""歩の疑似合法手生成のテスト（SHOGI-2a）。
+"""疑似合法手生成のテスト（SHOGI-2a: 歩、SHOGI-2b: 香車）。
 
-疑似合法手の範囲（盤外・味方駒マスの除外）のみを検証する。
+疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
 """
 
@@ -9,7 +9,7 @@ import pytest
 from shogi.board import Board
 from shogi.initial_position import create_hirate_board
 from shogi.move import Move
-from shogi.movegen import generate_pawn_moves
+from shogi.movegen import generate_lance_moves, generate_pawn_moves
 from shogi.piece import Color, Piece, PieceType
 
 
@@ -98,3 +98,119 @@ class Test異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_pawn_moves(Board(), 0, 5)
+
+
+class Test香車の走り:
+    def test_先手の香は前方向へ盤の端まで走る(self):
+        # 空盤の5九の先手香 → 5八〜5一の8マス（近い順）
+        board = board_with((5, 9, Piece(Color.BLACK, PieceType.LANCE)))
+        assert generate_lance_moves(board, 5, 9) == [
+            Move(5, 9, 5, to_rank) for to_rank in range(8, 0, -1)
+        ]
+
+    def test_後手の香は後方向へ盤の端まで走る(self):
+        # 空盤の5一の後手香 → 5二〜5九の8マス（近い順）
+        board = board_with((5, 1, Piece(Color.WHITE, PieceType.LANCE)))
+        assert generate_lance_moves(board, 5, 1) == [
+            Move(5, 1, 5, to_rank) for to_rank in range(2, 10)
+        ]
+
+    def test_盤の途中からは残りの段だけ走る(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.LANCE)))
+        assert generate_lance_moves(board, 5, 5) == [
+            Move(5, 5, 5, 4),
+            Move(5, 5, 5, 3),
+            Move(5, 5, 5, 2),
+            Move(5, 5, 5, 1),
+        ]
+
+    def test_最奥の段の香は動けない(self):
+        # 実局面では行き所のない駒（SHOGI-3 の反則）だが、ここでは候補なし
+        board = board_with((5, 1, Piece(Color.BLACK, PieceType.LANCE)))
+        assert generate_lance_moves(board, 5, 1) == []
+
+
+class Test香車の停止:
+    def test_味方駒の手前で停止しそのマスは含めない(self):
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.LANCE)),
+            (5, 5, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_lance_moves(board, 5, 9) == [
+            Move(5, 9, 5, 8),
+            Move(5, 9, 5, 7),
+            Move(5, 9, 5, 6),
+        ]
+
+    def test_相手駒のマスで停止しそのマスは含める(self):
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.LANCE)),
+            (5, 5, Piece(Color.WHITE, PieceType.PAWN)),
+        )
+        assert generate_lance_moves(board, 5, 9) == [
+            Move(5, 9, 5, 8),
+            Move(5, 9, 5, 7),
+            Move(5, 9, 5, 6),
+            Move(5, 9, 5, 5),  # 相手駒を取る手
+        ]
+
+    def test_相手駒の先へは飛び越えられない(self):
+        # 相手駒で停止した後ろにある空きマス（5四〜5一）が含まれないこと
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.LANCE)),
+            (5, 5, Piece(Color.WHITE, PieceType.PAWN)),
+        )
+        moves = generate_lance_moves(board, 5, 9)
+        assert all(move.to_rank >= 5 for move in moves)
+
+    def test_隣が味方駒なら候補なし(self):
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.LANCE)),
+            (5, 8, Piece(Color.BLACK, PieceType.GOLD)),
+        )
+        assert generate_lance_moves(board, 5, 9) == []
+
+    def test_隣が相手駒ならその1マスだけ(self):
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.LANCE)),
+            (5, 8, Piece(Color.WHITE, PieceType.GOLD)),
+        )
+        assert generate_lance_moves(board, 5, 9) == [Move(5, 9, 5, 8)]
+
+    def test_後手の香も味方駒の手前で停止する(self):
+        board = board_with(
+            (5, 1, Piece(Color.WHITE, PieceType.LANCE)),
+            (5, 4, Piece(Color.WHITE, PieceType.PAWN)),
+        )
+        assert generate_lance_moves(board, 5, 1) == [
+            Move(5, 1, 5, 2),
+            Move(5, 1, 5, 3),
+        ]
+
+
+class Test香車の平手初期局面:
+    @pytest.mark.parametrize("file", [1, 9])
+    def test_先手の香は自陣の歩の手前まで動ける(self, file):
+        # 九段目の香は七段目の味方歩に塞がれ、八段目の1マスのみ
+        board = create_hirate_board()
+        assert generate_lance_moves(board, file, 9) == [Move(file, 9, file, 8)]
+
+    @pytest.mark.parametrize("file", [1, 9])
+    def test_後手の香も自陣の歩の手前まで動ける(self, file):
+        board = create_hirate_board()
+        assert generate_lance_moves(board, file, 1) == [Move(file, 1, file, 2)]
+
+
+class Test香車の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_lance_moves(Board(), 5, 5)
+
+    def test_香車以外の駒を指定するとValueError(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.PAWN)))
+        with pytest.raises(ValueError):
+            generate_lance_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_lance_moves(Board(), 5, 10)
