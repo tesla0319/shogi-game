@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香車、2c: 桂馬）。
+"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香車、2c: 桂馬、2d: 銀将）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -13,6 +13,7 @@ from shogi.movegen import (
     generate_knight_moves,
     generate_lance_moves,
     generate_pawn_moves,
+    generate_silver_moves,
 )
 from shogi.piece import Color, Piece, PieceType
 
@@ -333,3 +334,128 @@ class Test桂馬の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_knight_moves(Board(), 10, 5)
+
+
+class Test銀将の5方向:
+    def test_先手の銀は前3方向と後ろ斜め2方向へ動ける(self):
+        # 5五の先手銀 → 前: 4四 5四 6四、後ろ斜め: 4六 6六
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_silver_moves(board, 5, 5) == [
+            Move(5, 5, 4, 4),
+            Move(5, 5, 5, 4),
+            Move(5, 5, 6, 4),
+            Move(5, 5, 4, 6),
+            Move(5, 5, 6, 6),
+        ]
+
+    def test_後手の銀は方向が反転する(self):
+        # 5五の後手銀 → 前(rank+1): 4六 5六 6六、後ろ斜め(rank-1): 4四 6四
+        board = board_with((5, 5, Piece(Color.WHITE, PieceType.SILVER)))
+        assert generate_silver_moves(board, 5, 5) == [
+            Move(5, 5, 4, 6),
+            Move(5, 5, 5, 6),
+            Move(5, 5, 6, 6),
+            Move(5, 5, 4, 4),
+            Move(5, 5, 6, 4),
+        ]
+
+    def test_横と真後ろには動けない(self):
+        # 完全一致テストの補強として、動けない3方向を明示的に確認する
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.SILVER)))
+        destinations = {
+            (move.to_file, move.to_rank) for move in generate_silver_moves(board, 5, 5)
+        }
+        assert (4, 5) not in destinations  # 横
+        assert (6, 5) not in destinations  # 横
+        assert (5, 6) not in destinations  # 真後ろ
+
+
+class Test銀将の盤の端:
+    def test_1筋の銀は左方向が欠ける(self):
+        board = board_with((1, 5, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_silver_moves(board, 1, 5) == [
+            Move(1, 5, 1, 4),
+            Move(1, 5, 2, 4),
+            Move(1, 5, 2, 6),
+        ]
+
+    def test_最奥の段の銀は後ろ斜めしか残らない(self):
+        board = board_with((5, 1, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_silver_moves(board, 5, 1) == [
+            Move(5, 1, 4, 2),
+            Move(5, 1, 6, 2),
+        ]
+
+    def test_先手の銀が一一の角では後ろ斜め1マスだけ(self):
+        # 前3方向は盤外（rank 0）、後ろ斜め左（file 0）も盤外
+        board = board_with((1, 1, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_silver_moves(board, 1, 1) == [Move(1, 1, 2, 2)]
+
+    def test_後手の銀が九九の角では後ろ斜め1マスだけ(self):
+        board = board_with((9, 9, Piece(Color.WHITE, PieceType.SILVER)))
+        assert generate_silver_moves(board, 9, 9) == [Move(9, 9, 8, 8)]
+
+
+class Test銀将の移動先の駒:
+    def test_味方駒のマスは除外され相手駒のマスは含まれる(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.SILVER)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),  # 前: 味方 → 除外
+            (4, 4, Piece(Color.WHITE, PieceType.PAWN)),  # 前斜め左: 相手 → 含む
+        )
+        assert generate_silver_moves(board, 5, 5) == [
+            Move(5, 5, 4, 4),  # 相手駒を取る手
+            Move(5, 5, 6, 4),
+            Move(5, 5, 4, 6),
+            Move(5, 5, 6, 6),
+        ]
+
+    def test_5方向すべて味方駒なら候補なし(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.SILVER)),
+            (4, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (4, 6, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 6, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_silver_moves(board, 5, 5) == []
+
+
+class Test銀将の平手初期局面:
+    def test_先手の3九銀は2八の飛車に塞がれる(self):
+        # 後ろ斜めは盤外（rank 10）、前斜め右の2八は味方の飛車 → 除外
+        board = create_hirate_board()
+        assert generate_silver_moves(board, 3, 9) == [
+            Move(3, 9, 3, 8),
+            Move(3, 9, 4, 8),
+        ]
+
+    def test_先手の7九銀は8八の角に塞がれる(self):
+        board = create_hirate_board()
+        assert generate_silver_moves(board, 7, 9) == [
+            Move(7, 9, 6, 8),
+            Move(7, 9, 7, 8),
+        ]
+
+    def test_後手の3一銀は2二の角に塞がれる(self):
+        board = create_hirate_board()
+        assert generate_silver_moves(board, 3, 1) == [
+            Move(3, 1, 3, 2),
+            Move(3, 1, 4, 2),
+        ]
+
+
+class Test銀将の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_silver_moves(Board(), 5, 5)
+
+    def test_銀将以外の駒を指定するとValueError(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.GOLD)))
+        with pytest.raises(ValueError):
+            generate_silver_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_silver_moves(Board(), 0, 0)

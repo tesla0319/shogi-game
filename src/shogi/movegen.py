@@ -1,4 +1,4 @@
-"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香車・桂馬のみ。
+"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香車・桂馬・銀将のみ。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
@@ -97,4 +97,27 @@ def generate_knight_moves(board: Board, file: int, rank: int) -> list[Move]:
 
     two_forward = 2 * _FORWARD[piece.color]
     offsets = [(-1, two_forward), (+1, two_forward)]  # file の小さい側から
+    return _step_moves(board, file, rank, piece.color, offsets)
+
+
+def generate_silver_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの銀将の疑似合法手を返す。
+
+    動ける方向は5つ: 前・前斜め左右・後ろ斜め左右（横と真後ろには動けない）。
+    盤外と味方駒のあるマスは候補に含めない（空きマスと相手駒のマスは含める）。
+    指定マスが空きマス、または銀将以外の駒の場合は ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.SILVER:
+        raise ValueError(f"({file}, {rank}) に銀将がありません: {piece!r}")
+
+    forward = _FORWARD[piece.color]
+    # 前の3マス（file の小さい側から）→ 後ろ斜めの2マス
+    offsets = [
+        (-1, forward),
+        (0, forward),
+        (+1, forward),
+        (-1, -forward),
+        (+1, -forward),
+    ]
     return _step_moves(board, file, rank, piece.color, offsets)
