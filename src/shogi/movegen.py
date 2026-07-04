@@ -1,4 +1,7 @@
-"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香・桂・銀・金・玉・飛・角のみ。
+"""駒の疑似合法手の生成（SHOGI-2）。
+
+基本8駒種（歩・香・桂・銀・金・玉・飛・角）と金系成駒4種
+（と金・成香・成桂・成銀）に対応。馬・竜・成り候補・駒打ちは未対応。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
@@ -151,19 +154,13 @@ def generate_silver_moves(board: Board, file: int, rank: int) -> list[Move]:
     return _step_moves(board, file, rank, piece.color, offsets)
 
 
-def generate_gold_moves(board: Board, file: int, rank: int) -> list[Move]:
-    """指定マスの金将の疑似合法手を返す。
+def _gold_like_moves(board: Board, file: int, rank: int, color: Color) -> list[Move]:
+    """金と同じ6方向（前・前斜め左右・横左右・真後ろ）の候補を返す。
 
-    動ける方向は6つ: 前・前斜め左右・横左右・真後ろ（後ろ斜めには動けない）。
-    盤外と味方駒のあるマスは候補に含めない（空きマスと相手駒のマスは含める）。
-    指定マスが空きマス、または金将以外の駒の場合は ValueError を送出する。
-    と金・成香・成桂・成銀も同じ動きだが、成駒対応の Phase で扱う。
+    金将と、金と同じ動きをする成駒4種（と金・成香・成桂・成銀）で共用する。
+    駒種チェックは呼び出し側の各 generate_*_moves が行う。
     """
-    piece = board.get_piece(file, rank)
-    if piece is None or piece.piece_type is not PieceType.GOLD:
-        raise ValueError(f"({file}, {rank}) に金将がありません: {piece!r}")
-
-    forward = _FORWARD[piece.color]
+    forward = _FORWARD[color]
     # 前の3マス（file の小さい側から）→ 横の2マス → 真後ろ
     offsets = [
         (-1, forward),
@@ -173,7 +170,21 @@ def generate_gold_moves(board: Board, file: int, rank: int) -> list[Move]:
         (+1, 0),
         (0, -forward),
     ]
-    return _step_moves(board, file, rank, piece.color, offsets)
+    return _step_moves(board, file, rank, color, offsets)
+
+
+def generate_gold_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの金将の疑似合法手を返す。
+
+    動ける方向は6つ: 前・前斜め左右・横左右・真後ろ（後ろ斜めには動けない）。
+    盤外と味方駒のあるマスは候補に含めない（空きマスと相手駒のマスは含める）。
+    指定マスが空きマス、または金将以外の駒の場合は ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.GOLD:
+        raise ValueError(f"({file}, {rank}) に金将がありません: {piece!r}")
+
+    return _gold_like_moves(board, file, rank, piece.color)
 
 
 # 玉将の8方向。全方向対称で手番に依存しないため、file の小さい側から順の固定リスト
@@ -243,3 +254,55 @@ def generate_bishop_moves(board: Board, file: int, rank: int) -> list[Move]:
         raise ValueError(f"({file}, {rank}) に角行がありません: {piece!r}")
 
     return _sliding_moves(board, file, rank, piece.color, _BISHOP_DIRECTIONS)
+
+
+def generate_promoted_pawn_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスのと金の疑似合法手を返す。動きは金将と同じ6方向。
+
+    指定マスが空きマス、またはと金以外の駒（金将や歩を含む）の場合は
+    ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.PROMOTED_PAWN:
+        raise ValueError(f"({file}, {rank}) にと金がありません: {piece!r}")
+
+    return _gold_like_moves(board, file, rank, piece.color)
+
+
+def generate_promoted_lance_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの成香の疑似合法手を返す。動きは金将と同じ6方向。
+
+    指定マスが空きマス、または成香以外の駒（金将や香車を含む）の場合は
+    ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.PROMOTED_LANCE:
+        raise ValueError(f"({file}, {rank}) に成香がありません: {piece!r}")
+
+    return _gold_like_moves(board, file, rank, piece.color)
+
+
+def generate_promoted_knight_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの成桂の疑似合法手を返す。動きは金将と同じ6方向。
+
+    指定マスが空きマス、または成桂以外の駒（金将や桂馬を含む）の場合は
+    ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.PROMOTED_KNIGHT:
+        raise ValueError(f"({file}, {rank}) に成桂がありません: {piece!r}")
+
+    return _gold_like_moves(board, file, rank, piece.color)
+
+
+def generate_promoted_silver_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの成銀の疑似合法手を返す。動きは金将と同じ6方向。
+
+    指定マスが空きマス、または成銀以外の駒（金将や銀将を含む）の場合は
+    ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.PROMOTED_SILVER:
+        raise ValueError(f"({file}, {rank}) に成銀がありません: {piece!r}")
+
+    return _gold_like_moves(board, file, rank, piece.color)

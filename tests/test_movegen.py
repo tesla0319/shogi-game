@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a〜2h: 歩・香・桂・銀・金・玉・飛・角）。
+"""疑似合法手生成のテスト（SHOGI-2a〜2h: 基本8駒種、2i-1: 金系成駒4種）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -16,6 +16,10 @@ from shogi.movegen import (
     generate_knight_moves,
     generate_lance_moves,
     generate_pawn_moves,
+    generate_promoted_knight_moves,
+    generate_promoted_lance_moves,
+    generate_promoted_pawn_moves,
+    generate_promoted_silver_moves,
     generate_rook_moves,
     generate_silver_moves,
 )
@@ -989,3 +993,112 @@ class Test角行の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_bishop_moves(Board(), 0, 10)
+
+
+# 金系成駒: (生成関数, 成駒の駒種, 成る前の駒種)
+GOLD_LIKE_CASES = [
+    (generate_promoted_pawn_moves, PieceType.PROMOTED_PAWN, PieceType.PAWN),
+    (generate_promoted_lance_moves, PieceType.PROMOTED_LANCE, PieceType.LANCE),
+    (generate_promoted_knight_moves, PieceType.PROMOTED_KNIGHT, PieceType.KNIGHT),
+    (generate_promoted_silver_moves, PieceType.PROMOTED_SILVER, PieceType.SILVER),
+]
+
+GOLD_LIKE_PARAMS = pytest.mark.parametrize(
+    ("generate", "piece_type", "base_type"),
+    GOLD_LIKE_CASES,
+    ids=["と金", "成香", "成桂", "成銀"],
+)
+
+
+class Test金系成駒の6方向:
+    @GOLD_LIKE_PARAMS
+    def test_先手は金と同じ6方向へ動ける(self, generate, piece_type, base_type):
+        # 5五の先手成駒 → 前: 4四 5四 6四、横: 4五 6五、真後ろ: 5六
+        board = board_with((5, 5, Piece(Color.BLACK, piece_type)))
+        assert generate(board, 5, 5) == [
+            Move(5, 5, 4, 4),
+            Move(5, 5, 5, 4),
+            Move(5, 5, 6, 4),
+            Move(5, 5, 4, 5),
+            Move(5, 5, 6, 5),
+            Move(5, 5, 5, 6),
+        ]
+
+    @GOLD_LIKE_PARAMS
+    def test_後手は前後が反転する(self, generate, piece_type, base_type):
+        board = board_with((5, 5, Piece(Color.WHITE, piece_type)))
+        assert generate(board, 5, 5) == [
+            Move(5, 5, 4, 6),
+            Move(5, 5, 5, 6),
+            Move(5, 5, 6, 6),
+            Move(5, 5, 4, 5),
+            Move(5, 5, 6, 5),
+            Move(5, 5, 5, 4),
+        ]
+
+    @GOLD_LIKE_PARAMS
+    def test_後ろ斜めには動けない(self, generate, piece_type, base_type):
+        board = board_with((5, 5, Piece(Color.BLACK, piece_type)))
+        destinations = {(move.to_file, move.to_rank) for move in generate(board, 5, 5)}
+        assert (4, 6) not in destinations
+        assert (6, 6) not in destinations
+
+    @GOLD_LIKE_PARAMS
+    def test_同じ配置の金将と完全に同じ手を生成する(self, generate, piece_type, base_type):
+        # 金の再利用による挙動一貫性の確認。障害物を混ぜた同一配置で比較する
+        obstacles = [
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),  # 前: 味方
+            (4, 5, Piece(Color.WHITE, PieceType.PAWN)),  # 横左: 相手
+        ]
+        promoted_board = board_with((5, 5, Piece(Color.BLACK, piece_type)), *obstacles)
+        gold_board = board_with((5, 5, Piece(Color.BLACK, PieceType.GOLD)), *obstacles)
+        assert generate(promoted_board, 5, 5) == generate_gold_moves(gold_board, 5, 5)
+
+
+class Test金系成駒の境界と駒:
+    @GOLD_LIKE_PARAMS
+    def test_一一の角では横と真後ろの2マスだけ(self, generate, piece_type, base_type):
+        board = board_with((1, 1, Piece(Color.BLACK, piece_type)))
+        assert generate(board, 1, 1) == [
+            Move(1, 1, 2, 1),
+            Move(1, 1, 1, 2),
+        ]
+
+    @GOLD_LIKE_PARAMS
+    def test_味方駒のマスは除外され相手駒のマスは含まれる(
+        self, generate, piece_type, base_type
+    ):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, piece_type)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),  # 前: 味方 → 除外
+            (6, 5, Piece(Color.WHITE, PieceType.PAWN)),  # 横右: 相手 → 含む
+        )
+        moves = generate(board, 5, 5)
+        assert Move(5, 5, 5, 4) not in moves
+        assert Move(5, 5, 6, 5) in moves  # 相手駒を取る手
+
+
+class Test金系成駒の異常系:
+    @GOLD_LIKE_PARAMS
+    def test_空きマスを指定するとValueError(self, generate, piece_type, base_type):
+        with pytest.raises(ValueError):
+            generate(Board(), 5, 5)
+
+    @GOLD_LIKE_PARAMS
+    def test_金将を渡してもValueError(self, generate, piece_type, base_type):
+        # 動きは同じでも駒種は別。生成関数は自分の駒種だけを受け付ける
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.GOLD)))
+        with pytest.raises(ValueError):
+            generate(board, 5, 5)
+
+    @GOLD_LIKE_PARAMS
+    def test_成る前の駒を渡してもValueError(self, generate, piece_type, base_type):
+        # 例: と金の生成関数に歩を渡す
+        board = board_with((5, 5, Piece(Color.BLACK, base_type)))
+        with pytest.raises(ValueError):
+            generate(board, 5, 5)
+
+    @GOLD_LIKE_PARAMS
+    def test_盤外の座標を指定するとValueError(self, generate, piece_type, base_type):
+        with pytest.raises(ValueError):
+            generate(Board(), 0, 5)
