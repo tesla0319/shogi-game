@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香車、2c: 桂馬、2d: 銀将、2e: 金将）。
+"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香、2c: 桂、2d: 銀、2e: 金、2f: 玉）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -11,6 +11,7 @@ from shogi.initial_position import create_hirate_board
 from shogi.move import Move
 from shogi.movegen import (
     generate_gold_moves,
+    generate_king_moves,
     generate_knight_moves,
     generate_lance_moves,
     generate_pawn_moves,
@@ -592,3 +593,137 @@ class Test金将の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_gold_moves(Board(), 5, 0)
+
+
+class Test玉将の8方向:
+    # file の小さい側から、同じ file 内では rank の小さい側から並ぶ
+    EXPECTED_FROM_5_5 = [
+        Move(5, 5, 4, 4),
+        Move(5, 5, 4, 5),
+        Move(5, 5, 4, 6),
+        Move(5, 5, 5, 4),
+        Move(5, 5, 5, 6),
+        Move(5, 5, 6, 4),
+        Move(5, 5, 6, 5),
+        Move(5, 5, 6, 6),
+    ]
+
+    def test_先手の玉は隣接8方向へ動ける(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.KING)))
+        assert generate_king_moves(board, 5, 5) == self.EXPECTED_FROM_5_5
+
+    def test_後手の玉も同じ8方向へ動ける(self):
+        # 玉は全方向対称なので手番で動きが変わらない
+        board = board_with((5, 5, Piece(Color.WHITE, PieceType.KING)))
+        assert generate_king_moves(board, 5, 5) == self.EXPECTED_FROM_5_5
+
+
+class Test玉将の盤の端:
+    def test_1筋の玉は左方向が欠けて5マス(self):
+        board = board_with((1, 5, Piece(Color.BLACK, PieceType.KING)))
+        assert generate_king_moves(board, 1, 5) == [
+            Move(1, 5, 1, 4),
+            Move(1, 5, 1, 6),
+            Move(1, 5, 2, 4),
+            Move(1, 5, 2, 5),
+            Move(1, 5, 2, 6),
+        ]
+
+    def test_最奥の段の玉は前方向が欠けて5マス(self):
+        board = board_with((5, 1, Piece(Color.BLACK, PieceType.KING)))
+        assert generate_king_moves(board, 5, 1) == [
+            Move(5, 1, 4, 1),
+            Move(5, 1, 4, 2),
+            Move(5, 1, 5, 2),
+            Move(5, 1, 6, 1),
+            Move(5, 1, 6, 2),
+        ]
+
+    def test_一一の角では3マスだけ(self):
+        board = board_with((1, 1, Piece(Color.BLACK, PieceType.KING)))
+        assert generate_king_moves(board, 1, 1) == [
+            Move(1, 1, 1, 2),
+            Move(1, 1, 2, 1),
+            Move(1, 1, 2, 2),
+        ]
+
+    def test_九九の角では3マスだけ(self):
+        board = board_with((9, 9, Piece(Color.WHITE, PieceType.KING)))
+        assert generate_king_moves(board, 9, 9) == [
+            Move(9, 9, 8, 8),
+            Move(9, 9, 8, 9),
+            Move(9, 9, 9, 8),
+        ]
+
+
+class Test玉将の移動先の駒:
+    def test_味方駒のマスは除外され相手駒のマスは含まれる(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KING)),
+            (5, 4, Piece(Color.BLACK, PieceType.GOLD)),  # 前: 味方 → 除外
+            (4, 4, Piece(Color.WHITE, PieceType.PAWN)),  # 前斜め左: 相手 → 含む
+        )
+        assert generate_king_moves(board, 5, 5) == [
+            Move(5, 5, 4, 4),  # 相手駒を取る手
+            Move(5, 5, 4, 5),
+            Move(5, 5, 4, 6),
+            Move(5, 5, 5, 6),
+            Move(5, 5, 6, 4),
+            Move(5, 5, 6, 5),
+            Move(5, 5, 6, 6),
+        ]
+
+    def test_8方向すべて味方駒なら候補なし(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KING)),
+            *(
+                (5 + dfile, 5 + drank, Piece(Color.BLACK, PieceType.PAWN))
+                for dfile in (-1, 0, 1)
+                for drank in (-1, 0, 1)
+                if (dfile, drank) != (0, 0)
+            ),
+        )
+        assert generate_king_moves(board, 5, 5) == []
+
+    def test_相手の利きがあるマスも候補に含める(self):
+        # 5四は後手歩（5三）の利きだが、疑似合法手の層では除外しない
+        # （自殺手の除外は SHOGI-3 の合法手判定の責務）
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KING)),
+            (5, 3, Piece(Color.WHITE, PieceType.PAWN)),
+        )
+        assert Move(5, 5, 5, 4) in generate_king_moves(board, 5, 5)
+
+
+class Test玉将の平手初期局面:
+    def test_先手の5九玉は前3マスに動ける(self):
+        # 横の4九金・6九金は味方 → 除外、後ろは盤外
+        board = create_hirate_board()
+        assert generate_king_moves(board, 5, 9) == [
+            Move(5, 9, 4, 8),
+            Move(5, 9, 5, 8),
+            Move(5, 9, 6, 8),
+        ]
+
+    def test_後手の5一玉は前3マスに動ける(self):
+        board = create_hirate_board()
+        assert generate_king_moves(board, 5, 1) == [
+            Move(5, 1, 4, 2),
+            Move(5, 1, 5, 2),
+            Move(5, 1, 6, 2),
+        ]
+
+
+class Test玉将の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_king_moves(Board(), 5, 5)
+
+    def test_玉将以外の駒を指定するとValueError(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.GOLD)))
+        with pytest.raises(ValueError):
+            generate_king_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_king_moves(Board(), 0, 5)

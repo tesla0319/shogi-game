@@ -1,4 +1,4 @@
-"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香車・桂馬・銀将・金将のみ。
+"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香車・桂馬・銀将・金将・玉将のみ。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
@@ -146,3 +146,32 @@ def generate_gold_moves(board: Board, file: int, rank: int) -> list[Move]:
         (0, -forward),
     ]
     return _step_moves(board, file, rank, piece.color, offsets)
+
+
+# 玉将の8方向。全方向対称で手番に依存しないため、file の小さい側から順の固定リスト
+_KING_OFFSETS = [
+    (-1, -1),
+    (-1, 0),
+    (-1, +1),
+    (0, -1),
+    (0, +1),
+    (+1, -1),
+    (+1, 0),
+    (+1, +1),
+]
+
+
+def generate_king_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの玉将の疑似合法手を返す。
+
+    隣接する8方向へ1マス動ける（全方向対称のため先手・後手で同じ）。
+    盤外と味方駒のあるマスは候補に含めない（空きマスと相手駒のマスは含める）。
+    相手の利きがあるマスへの移動（自殺手）もここでは候補に含める。
+    その除外は合法手判定（SHOGI-3）の責務。
+    指定マスが空きマス、または玉将以外の駒の場合は ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.KING:
+        raise ValueError(f"({file}, {rank}) に玉将がありません: {piece!r}")
+
+    return _step_moves(board, file, rank, piece.color, _KING_OFFSETS)
