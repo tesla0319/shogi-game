@@ -1,4 +1,4 @@
-"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香車・桂馬・銀将のみ。
+"""駒の疑似合法手の生成（SHOGI-2）。現在は歩・香車・桂馬・銀将・金将のみ。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
@@ -119,5 +119,30 @@ def generate_silver_moves(board: Board, file: int, rank: int) -> list[Move]:
         (+1, forward),
         (-1, -forward),
         (+1, -forward),
+    ]
+    return _step_moves(board, file, rank, piece.color, offsets)
+
+
+def generate_gold_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの金将の疑似合法手を返す。
+
+    動ける方向は6つ: 前・前斜め左右・横左右・真後ろ（後ろ斜めには動けない）。
+    盤外と味方駒のあるマスは候補に含めない（空きマスと相手駒のマスは含める）。
+    指定マスが空きマス、または金将以外の駒の場合は ValueError を送出する。
+    と金・成香・成桂・成銀も同じ動きだが、成駒対応の Phase で扱う。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.GOLD:
+        raise ValueError(f"({file}, {rank}) に金将がありません: {piece!r}")
+
+    forward = _FORWARD[piece.color]
+    # 前の3マス（file の小さい側から）→ 横の2マス → 真後ろ
+    offsets = [
+        (-1, forward),
+        (0, forward),
+        (+1, forward),
+        (-1, 0),
+        (+1, 0),
+        (0, -forward),
     ]
     return _step_moves(board, file, rank, piece.color, offsets)

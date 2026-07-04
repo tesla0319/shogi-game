@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香車、2c: 桂馬、2d: 銀将）。
+"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香車、2c: 桂馬、2d: 銀将、2e: 金将）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -10,6 +10,7 @@ from shogi.board import Board
 from shogi.initial_position import create_hirate_board
 from shogi.move import Move
 from shogi.movegen import (
+    generate_gold_moves,
     generate_knight_moves,
     generate_lance_moves,
     generate_pawn_moves,
@@ -459,3 +460,135 @@ class Test銀将の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_silver_moves(Board(), 0, 0)
+
+
+class Test金将の6方向:
+    def test_先手の金は前3方向と横2方向と真後ろへ動ける(self):
+        # 5五の先手金 → 前: 4四 5四 6四、横: 4五 6五、真後ろ: 5六
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.GOLD)))
+        assert generate_gold_moves(board, 5, 5) == [
+            Move(5, 5, 4, 4),
+            Move(5, 5, 5, 4),
+            Move(5, 5, 6, 4),
+            Move(5, 5, 4, 5),
+            Move(5, 5, 6, 5),
+            Move(5, 5, 5, 6),
+        ]
+
+    def test_後手の金は前後が反転する(self):
+        # 5五の後手金 → 前(rank+1): 4六 5六 6六、横: 4五 6五、真後ろ: 5四
+        board = board_with((5, 5, Piece(Color.WHITE, PieceType.GOLD)))
+        assert generate_gold_moves(board, 5, 5) == [
+            Move(5, 5, 4, 6),
+            Move(5, 5, 5, 6),
+            Move(5, 5, 6, 6),
+            Move(5, 5, 4, 5),
+            Move(5, 5, 6, 5),
+            Move(5, 5, 5, 4),
+        ]
+
+    def test_後ろ斜めには動けない(self):
+        # 銀との違い。完全一致テストの補強として明示的に確認する
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.GOLD)))
+        destinations = {
+            (move.to_file, move.to_rank) for move in generate_gold_moves(board, 5, 5)
+        }
+        assert (4, 6) not in destinations  # 後ろ斜め左
+        assert (6, 6) not in destinations  # 後ろ斜め右
+
+
+class Test金将の盤の端:
+    def test_1筋の金は左方向が欠ける(self):
+        board = board_with((1, 5, Piece(Color.BLACK, PieceType.GOLD)))
+        assert generate_gold_moves(board, 1, 5) == [
+            Move(1, 5, 1, 4),
+            Move(1, 5, 2, 4),
+            Move(1, 5, 2, 5),
+            Move(1, 5, 1, 6),
+        ]
+
+    def test_最奥の段の金は横と真後ろだけ残る(self):
+        board = board_with((5, 1, Piece(Color.BLACK, PieceType.GOLD)))
+        assert generate_gold_moves(board, 5, 1) == [
+            Move(5, 1, 4, 1),
+            Move(5, 1, 6, 1),
+            Move(5, 1, 5, 2),
+        ]
+
+    def test_先手の金が一一の角では横と真後ろの2マスだけ(self):
+        board = board_with((1, 1, Piece(Color.BLACK, PieceType.GOLD)))
+        assert generate_gold_moves(board, 1, 1) == [
+            Move(1, 1, 2, 1),
+            Move(1, 1, 1, 2),
+        ]
+
+    def test_後手の金が九九の角では横と真後ろの2マスだけ(self):
+        board = board_with((9, 9, Piece(Color.WHITE, PieceType.GOLD)))
+        assert generate_gold_moves(board, 9, 9) == [
+            Move(9, 9, 8, 9),
+            Move(9, 9, 9, 8),
+        ]
+
+
+class Test金将の移動先の駒:
+    def test_味方駒のマスは除外され相手駒のマスは含まれる(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.GOLD)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),  # 前: 味方 → 除外
+            (4, 5, Piece(Color.WHITE, PieceType.PAWN)),  # 横左: 相手 → 含む
+        )
+        assert generate_gold_moves(board, 5, 5) == [
+            Move(5, 5, 4, 4),
+            Move(5, 5, 6, 4),
+            Move(5, 5, 4, 5),  # 相手駒を取る手
+            Move(5, 5, 6, 5),
+            Move(5, 5, 5, 6),
+        ]
+
+    def test_6方向すべて味方駒なら候補なし(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.GOLD)),
+            (4, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 4, Piece(Color.BLACK, PieceType.PAWN)),
+            (4, 5, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 5, Piece(Color.BLACK, PieceType.PAWN)),
+            (5, 6, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_gold_moves(board, 5, 5) == []
+
+
+class Test金将の平手初期局面:
+    def test_先手の4九金は前3マスに動ける(self):
+        # 横の3九銀・5九玉は味方 → 除外、真後ろは盤外
+        board = create_hirate_board()
+        assert generate_gold_moves(board, 4, 9) == [
+            Move(4, 9, 3, 8),
+            Move(4, 9, 4, 8),
+            Move(4, 9, 5, 8),
+        ]
+
+    def test_後手の6一金は前3マスに動ける(self):
+        # 横の5一玉・7一銀は味方 → 除外、真後ろは盤外
+        board = create_hirate_board()
+        assert generate_gold_moves(board, 6, 1) == [
+            Move(6, 1, 5, 2),
+            Move(6, 1, 6, 2),
+            Move(6, 1, 7, 2),
+        ]
+
+
+class Test金将の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_gold_moves(Board(), 5, 5)
+
+    def test_金将以外の駒を指定するとValueError(self):
+        # 動きが同じ「と金」も金将ではないので ValueError（成駒対応は別 Phase）
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.PROMOTED_PAWN)))
+        with pytest.raises(ValueError):
+            generate_gold_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_gold_moves(Board(), 5, 0)
