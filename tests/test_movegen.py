@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a: 歩、SHOGI-2b: 香車）。
+"""疑似合法手生成のテスト（SHOGI-2a: 歩、2b: 香車、2c: 桂馬）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -9,7 +9,11 @@ import pytest
 from shogi.board import Board
 from shogi.initial_position import create_hirate_board
 from shogi.move import Move
-from shogi.movegen import generate_lance_moves, generate_pawn_moves
+from shogi.movegen import (
+    generate_knight_moves,
+    generate_lance_moves,
+    generate_pawn_moves,
+)
 from shogi.piece import Color, Piece, PieceType
 
 
@@ -214,3 +218,118 @@ class Test香車の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_lance_moves(Board(), 5, 10)
+
+
+class Test桂馬の跳び先:
+    def test_先手の桂は前2段の左右へ跳ぶ(self):
+        # 5五の先手桂 → 4三と6三（file の小さい側から）
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_knight_moves(board, 5, 5) == [
+            Move(5, 5, 4, 3),
+            Move(5, 5, 6, 3),
+        ]
+
+    def test_後手の桂は後2段の左右へ跳ぶ(self):
+        board = board_with((5, 5, Piece(Color.WHITE, PieceType.KNIGHT)))
+        assert generate_knight_moves(board, 5, 5) == [
+            Move(5, 5, 4, 7),
+            Move(5, 5, 6, 7),
+        ]
+
+    def test_途中に駒があっても飛び越えられる(self):
+        # 跳び先の間にある3マスを味方駒で埋めても、跳び先2箇所は変わらない
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.KNIGHT)),
+            (4, 8, Piece(Color.BLACK, PieceType.PAWN)),
+            (5, 8, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 8, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_knight_moves(board, 5, 9) == [
+            Move(5, 9, 4, 7),
+            Move(5, 9, 6, 7),
+        ]
+
+
+class Test桂馬の盤外:
+    def test_1筋の桂は左側だけに跳ぶ(self):
+        board = board_with((1, 5, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_knight_moves(board, 1, 5) == [Move(1, 5, 2, 3)]
+
+    def test_9筋の桂は右側だけに跳ぶ(self):
+        board = board_with((9, 5, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_knight_moves(board, 9, 5) == [Move(9, 5, 8, 3)]
+
+    @pytest.mark.parametrize("rank", [1, 2])
+    def test_奥から2段以内の先手桂は動けない(self, rank):
+        # 跳び先が盤外。実局面では行き所のない駒（SHOGI-3 の反則）だが候補なしを返す
+        board = board_with((5, rank, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_knight_moves(board, 5, rank) == []
+
+    @pytest.mark.parametrize("rank", [8, 9])
+    def test_奥から2段以内の後手桂は動けない(self, rank):
+        board = board_with((5, rank, Piece(Color.WHITE, PieceType.KNIGHT)))
+        assert generate_knight_moves(board, 5, rank) == []
+
+    def test_三段目の先手桂は一段目へ跳べる(self):
+        # 盤外判定の境界（rank 2→NG, 3→OK）
+        board = board_with((5, 3, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_knight_moves(board, 5, 3) == [
+            Move(5, 3, 4, 1),
+            Move(5, 3, 6, 1),
+        ]
+
+
+class Test桂馬の跳び先の駒:
+    def test_片方が味方駒ならもう片方だけ(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KNIGHT)),
+            (4, 3, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_knight_moves(board, 5, 5) == [Move(5, 5, 6, 3)]
+
+    def test_両方が味方駒なら候補なし(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KNIGHT)),
+            (4, 3, Piece(Color.BLACK, PieceType.PAWN)),
+            (6, 3, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_knight_moves(board, 5, 5) == []
+
+    def test_相手駒のマスへは跳べる_取る手になる(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KNIGHT)),
+            (4, 3, Piece(Color.WHITE, PieceType.PAWN)),
+            (6, 3, Piece(Color.WHITE, PieceType.GOLD)),
+        )
+        assert generate_knight_moves(board, 5, 5) == [
+            Move(5, 5, 4, 3),
+            Move(5, 5, 6, 3),
+        ]
+
+
+class Test桂馬の平手初期局面:
+    @pytest.mark.parametrize(("file", "rank", "color"), [
+        (2, 9, Color.BLACK),
+        (8, 9, Color.BLACK),
+        (2, 1, Color.WHITE),
+        (8, 1, Color.WHITE),
+    ])
+    def test_初期配置の桂は自陣の歩に塞がれて動けない(self, file, rank, color):
+        # 跳び先（三段目/七段目）が両方とも味方の歩
+        board = create_hirate_board()
+        assert generate_knight_moves(board, file, rank) == []
+
+
+class Test桂馬の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_knight_moves(Board(), 5, 5)
+
+    def test_桂馬以外の駒を指定するとValueError(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.LANCE)))
+        with pytest.raises(ValueError):
+            generate_knight_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_knight_moves(Board(), 10, 5)
