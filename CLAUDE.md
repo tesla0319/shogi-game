@@ -9,7 +9,7 @@
 
 - プロダクト名: shogi-ai
 - 一言でいうと: 将棋の対局ができるゲーム。まずCLIで人対人・人対AIの対局を実現し、GUIは後続Phaseで扱う
-- 現在のフェーズ: SHOGI-0（設計フェーズ。ゲームロジックの実装は未着手）
+- 現在のフェーズ: SHOGI-1（データモデル + SFEN入出力）まで完了。次は SHOGI-2（駒の移動生成。合法手判定は SHOGI-3）
 - 対象ユーザー: 開発者本人（学習・趣味目的）（要確認）
 
 ## 技術スタック【固有】
@@ -35,7 +35,6 @@
 
 ## ディレクトリ構成【固有】
 
-<!-- Phase 1 以降で作成予定。現時点で存在するのは docs/ templates/ .claude/ のみ -->
 ```
 shogi-ai/
 ├── CLAUDE.md
@@ -43,8 +42,8 @@ shogi-ai/
 ├── docs/           # 開発計画・設計メモ（development-plan.md）
 ├── templates/      # AI-Templates 由来のテンプレート（原本は変更しない）
 ├── .claude/skills/ # プロジェクト用スキル
-├── src/shogi/      # ゲーム本体（Phase 1〜で作成）
-└── tests/          # pytest テスト（Phase 1〜で作成）
+├── src/shogi/      # ゲーム本体（piece / board / initial_position / sfen）
+└── tests/          # pytest テスト（モジュール毎に test_*.py）
 ```
 
 ## 開発コマンド【固有】
@@ -97,5 +96,5 @@ shogi-ai/
 
 ## 既知の制約・注意点【育成】
 
-- SHOGI-0 時点ではゲームロジックの実装は禁止（設計フェーズ）。実装は SHOGI-1 承認後に開始する
 - templates/ 配下はテンプレート原本のコピーであり、編集しない
+- SFEN の読み書きは現状「盤面部のみ」。手番・持ち駒・手数を含む完全な SFEN は Position 概念の導入（対局進行系 Phase）まで扱わない
