@@ -1,15 +1,19 @@
 """駒の疑似合法手の生成（SHOGI-2）。
 
-盤上の全14駒種（基本8種 + 成駒6種）に対応。成り候補・駒打ちは未対応。
+盤上の全14駒種（基本8種 + 成駒6種）と成り/不成の候補に対応。駒打ちは未対応。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
-責務のため、ここでは行わない。成り・駒打ちも後続で扱う。
+責務のため、ここでは行わない。駒打ちも後続で扱う。
+
+成り候補は駒種ごとの generate_*_moves ではなく、ディスパッチャ
+generate_piece_moves が _expand_promotions で付与する。駒の動きのパターンと
+成りの規則を別の責務として分け、成りロジックを1箇所に集約するため。
 """
 
 from shogi.board import BOARD_SIZE, Board
 from shogi.move import Move
-from shogi.piece import Color, PieceType
+from shogi.piece import Color, Piece, PieceType
 
 # 前方向（rank の増減）。先手は奥（rank が小さい方）へ、後手は手前へ。歩・香・桂で共用
 _FORWARD = {Color.BLACK: -1, Color.WHITE: +1}
@@ -334,6 +338,83 @@ def generate_dragon_moves(board: Board, file: int, rank: int) -> list[Move]:
     ) + _step_moves(board, file, rank, piece.color, _BISHOP_DIRECTIONS)
 
 
+# 成れる駒種。金・玉と成駒6種は成れない
+_PROMOTABLE_TYPES = {
+    PieceType.PAWN,
+    PieceType.LANCE,
+    PieceType.KNIGHT,
+    PieceType.SILVER,
+    PieceType.BISHOP,
+    PieceType.ROOK,
+}
+
+# 不成だと行き所がなくなる駒種 → 最奥から数えた段数（歩・香=1段、桂=2段）。
+# 3分岐をベタ書きせず「不成だと動けなくなる深さ」という1つの概念に揃えるため辞書にする
+_DEAD_END_DEPTH = {
+    PieceType.PAWN: 1,
+    PieceType.LANCE: 1,
+    PieceType.KNIGHT: 2,
+}
+
+
+def _in_promotion_zone(color: Color, rank: int) -> bool:
+    """敵陣（先手は rank 1〜3、後手は rank 7〜9）かどうかを返す。"""
+    if color is Color.BLACK:
+        return rank <= 3
+    return rank >= BOARD_SIZE - 2  # 7〜9
+
+
+def _must_promote(piece_type: PieceType, color: Color, to_rank: int) -> bool:
+    """不成だと行き所がなくなる移動先か（= 強制成りか）を返す。
+
+    強制成りになる移動先は必ず敵陣内なので、成り可能かどうかの判定を
+    済ませた手に対して to_rank だけ見れば十分（from_rank は不要）。
+    """
+    depth = _DEAD_END_DEPTH.get(piece_type)
+    if depth is None:
+        return False  # 銀・角・飛は最奥でも不成のまま動けるので強制されない
+    if color is Color.BLACK:
+        return to_rank <= depth
+    return to_rank >= BOARD_SIZE + 1 - depth
+
+
+def _expand_promotions(piece: Piece, moves: list[Move]) -> list[Move]:
+    """疑似合法手のリストに成り候補を付与する後処理。
+
+    成りは「成れる駒種で、移動元または移動先が敵陣」のとき選べる。
+    移動元基準を含めるのは、敵陣内から敵陣外へ引く手でも成れるという
+    連盟ルールに合わせるため。走り駒は1回の生成で敵陣内外の両方に
+    移動先を持ちうるので、リスト単位ではなく手単位で判定する。
+
+    成れない手はそのまま1件、任意成りは [不成, 成] の2件（不成が先）、
+    強制成り（歩・香の最終段、桂の奥2段）は成のみ1件に展開する。
+    「行き所のない駒」の反則チェック（SHOGI-3）は駒打ちのみを対象とし、
+    盤上の移動の強制成りはこの関数が担う。
+    """
+    expanded = []
+    for move in moves:
+        can_promote = piece.piece_type in _PROMOTABLE_TYPES and (
+            _in_promotion_zone(piece.color, move.from_rank)
+            or _in_promotion_zone(piece.color, move.to_rank)
+        )
+        if not can_promote:
+            expanded.append(move)
+            continue
+        promotion = Move(
+            move.from_file,
+            move.from_rank,
+            move.to_file,
+            move.to_rank,
+            is_promotion=True,
+        )
+        if _must_promote(piece.piece_type, piece.color, move.to_rank):
+            expanded.append(promotion)  # 不成は候補に含めない
+        else:
+            expanded.append(move)
+            expanded.append(promotion)
+    return expanded
+
+
 # 駒種 → 疑似合法手の生成関数。全14駒種を網羅する
 _MOVE_GENERATORS = {
     PieceType.PAWN: generate_pawn_moves,
@@ -354,10 +435,12 @@ _MOVE_GENERATORS = {
 
 
 def generate_piece_moves(board: Board, file: int, rank: int) -> list[Move]:
-    """指定マスの駒の疑似合法手を返す（駒種に応じた生成関数への入口）。
+    """指定マスの駒の疑似合法手を、成り/不成の候補込みで返す。
 
     呼び出し側が駒種で分岐しなくて済むようにするためのディスパッチャ。
     合法手判定（SHOGI-3）で相手の全駒の利きを列挙する際もここを使う。
+    駒種ごとの generate_*_moves は成り候補を含まない（動きのパターンのみ）
+    ため、疑似合法手の列挙には専用関数ではなくこの関数を使うこと。
     指定マスが空きマスの場合、または対応する生成関数がない駒種の場合は
     ValueError を送出する。
     """
@@ -367,4 +450,4 @@ def generate_piece_moves(board: Board, file: int, rank: int) -> list[Move]:
     generator = _MOVE_GENERATORS.get(piece.piece_type)
     if generator is None:
         raise ValueError(f"未対応の駒種です: {piece.piece_type}")
-    return generator(board, file, rank)
+    return _expand_promotions(piece, generator(board, file, rank))

@@ -1,8 +1,11 @@
-"""疑似合法手生成のテスト（SHOGI-2a〜2h: 基本8駒種、2i: 成駒6種）。
+"""疑似合法手生成のテスト（SHOGI-2a〜2h: 基本8駒種、2i: 成駒6種、2j: 成り候補）。
 
-疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
-二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
+疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）と
+成り/不成の候補付与を検証する。
+二歩・王手放置などの反則除外（SHOGI-3）と駒打ちは対象外。
 """
+
+import dataclasses
 
 import pytest
 
@@ -10,6 +13,7 @@ from shogi.board import Board
 from shogi.initial_position import create_hirate_board
 from shogi.move import Move
 from shogi.movegen import (
+    _expand_promotions,
     generate_bishop_moves,
     generate_dragon_moves,
     generate_gold_moves,
@@ -1292,9 +1296,13 @@ class Testディスパッチャ:
         ALL_PIECE_CASES,
         ids=[piece_type.name for piece_type, _ in ALL_PIECE_CASES],
     )
-    def test_全14駒種で専用関数と同じ結果を返す(self, piece_type, dedicated):
-        board = board_with((5, 5, Piece(Color.BLACK, piece_type)))
-        assert generate_piece_moves(board, 5, 5) == dedicated(board, 5, 5)
+    def test_全14駒種で専用関数の結果に成り展開を適用したものと一致する(self, piece_type, dedicated):
+        # 専用関数は動きのパターンのみを返し、成り候補の付与はディスパッチャの
+        # 責務（SHOGI-2j）。正しい専用関数へ委譲されていることをここで確認する
+        piece = Piece(Color.BLACK, piece_type)
+        board = board_with((5, 5, piece))
+        expected = _expand_promotions(piece, dedicated(board, 5, 5))
+        assert generate_piece_moves(board, 5, 5) == expected
 
     def test_空きマスを指定するとValueError(self):
         with pytest.raises(ValueError):
@@ -1325,3 +1333,191 @@ class Testディスパッチャ:
                 if piece is not None and piece.color is Color.WHITE:
                     moves.extend(generate_piece_moves(board, file, rank))
         assert len(moves) == 30
+
+
+class TestMoveの成りフィールド:
+    def test_省略時は不成(self):
+        assert Move(7, 7, 7, 6).is_promotion is False
+
+    def test_成りフラグの違いは別の手として扱われる(self):
+        assert Move(8, 8, 2, 2) != Move(8, 8, 2, 2, is_promotion=True)
+
+    def test_frozenのため変更できない(self):
+        move = Move(7, 7, 7, 6)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            move.is_promotion = True
+
+
+class Test成り候補_任意成り:
+    def test_先手銀が敵陣に入る手は不成と成の2件になる(self):
+        # 5四の先手銀: rank 3 への3手は敵陣入りで [不成, 成]、rank 5 への2手は不成のみ
+        board = board_with((5, 4, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_piece_moves(board, 5, 4) == [
+            Move(5, 4, 4, 3),
+            Move(5, 4, 4, 3, is_promotion=True),
+            Move(5, 4, 5, 3),
+            Move(5, 4, 5, 3, is_promotion=True),
+            Move(5, 4, 6, 3),
+            Move(5, 4, 6, 3, is_promotion=True),
+            Move(5, 4, 4, 5),
+            Move(5, 4, 6, 5),
+        ]
+
+    def test_後手歩が敵陣に入る手は不成と成の2件になる(self):
+        # 後手の敵陣は rank 7〜9。5六の後手歩 → 5七で成りを選べる
+        board = board_with((5, 6, Piece(Color.WHITE, PieceType.PAWN)))
+        assert generate_piece_moves(board, 5, 6) == [
+            Move(5, 6, 5, 7),
+            Move(5, 6, 5, 7, is_promotion=True),
+        ]
+
+    def test_敵陣から出る手も成り候補になる(self):
+        # 移動元が敵陣なら移動先が敵陣外でも成れる（連盟ルール）。
+        # 5三の先手銀は rank 4 へ引く手も含め全手が [不成, 成] になる
+        board = board_with((5, 3, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_piece_moves(board, 5, 3) == [
+            Move(5, 3, 4, 2),
+            Move(5, 3, 4, 2, is_promotion=True),
+            Move(5, 3, 5, 2),
+            Move(5, 3, 5, 2, is_promotion=True),
+            Move(5, 3, 6, 2),
+            Move(5, 3, 6, 2, is_promotion=True),
+            Move(5, 3, 4, 4),
+            Move(5, 3, 4, 4, is_promotion=True),
+            Move(5, 3, 6, 4),
+            Move(5, 3, 6, 4, is_promotion=True),
+        ]
+
+    def test_敵陣内の飛はすべての手が成り候補付きになる(self):
+        # 移動元が敵陣なので横移動を含む全16手に成り候補が付く（飛は強制されない）
+        board = board_with((5, 3, Piece(Color.BLACK, PieceType.ROOK)))
+        expected = []
+        for move in generate_rook_moves(board, 5, 3):
+            expected.append(move)
+            expected.append(dataclasses.replace(move, is_promotion=True))
+        assert generate_piece_moves(board, 5, 3) == expected
+
+
+class Test成り候補_強制成り:
+    def test_先手歩の最終段への手は成のみ(self):
+        # 不成だと行き所がなくなるため、不成は候補に含めない
+        board = board_with((5, 2, Piece(Color.BLACK, PieceType.PAWN)))
+        assert generate_piece_moves(board, 5, 2) == [
+            Move(5, 2, 5, 1, is_promotion=True),
+        ]
+
+    def test_先手歩の2段目への手は任意成り(self):
+        # 強制になるのは最終段（rank 1）だけ。rank 2 へは不成でも動ける
+        board = board_with((5, 3, Piece(Color.BLACK, PieceType.PAWN)))
+        assert generate_piece_moves(board, 5, 3) == [
+            Move(5, 3, 5, 2),
+            Move(5, 3, 5, 2, is_promotion=True),
+        ]
+
+    def test_先手香の走りは段によって3パターンが混在する(self):
+        # 5九からの走り: rank 4 までは不成のみ、rank 3〜2 は [不成, 成]、rank 1 は成のみ
+        board = board_with((5, 9, Piece(Color.BLACK, PieceType.LANCE)))
+        assert generate_piece_moves(board, 5, 9) == [
+            Move(5, 9, 5, 8),
+            Move(5, 9, 5, 7),
+            Move(5, 9, 5, 6),
+            Move(5, 9, 5, 5),
+            Move(5, 9, 5, 4),
+            Move(5, 9, 5, 3),
+            Move(5, 9, 5, 3, is_promotion=True),
+            Move(5, 9, 5, 2),
+            Move(5, 9, 5, 2, is_promotion=True),
+            Move(5, 9, 5, 1, is_promotion=True),
+        ]
+
+    def test_先手桂の2段目への手は成のみ(self):
+        # 桂は rank 2 でも不成だと行き所がなくなるため強制成り
+        board = board_with((5, 4, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_piece_moves(board, 5, 4) == [
+            Move(5, 4, 4, 2, is_promotion=True),
+            Move(5, 4, 6, 2, is_promotion=True),
+        ]
+
+    def test_先手桂の最終段への手は成のみ(self):
+        board = board_with((5, 3, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_piece_moves(board, 5, 3) == [
+            Move(5, 3, 4, 1, is_promotion=True),
+            Move(5, 3, 6, 1, is_promotion=True),
+        ]
+
+    def test_先手桂の3段目への手は任意成り(self):
+        # rank 3 なら不成でもまだ跳べるので強制されない
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.KNIGHT)))
+        assert generate_piece_moves(board, 5, 5) == [
+            Move(5, 5, 4, 3),
+            Move(5, 5, 4, 3, is_promotion=True),
+            Move(5, 5, 6, 3),
+            Move(5, 5, 6, 3, is_promotion=True),
+        ]
+
+    def test_銀は最終段へ入っても強制されない(self):
+        # 銀・角・飛は最奥でも不成のまま動けるので、常に [不成, 成] の任意成り
+        board = board_with((5, 2, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_piece_moves(board, 5, 2) == [
+            Move(5, 2, 4, 1),
+            Move(5, 2, 4, 1, is_promotion=True),
+            Move(5, 2, 5, 1),
+            Move(5, 2, 5, 1, is_promotion=True),
+            Move(5, 2, 6, 1),
+            Move(5, 2, 6, 1, is_promotion=True),
+            Move(5, 2, 4, 3),
+            Move(5, 2, 4, 3, is_promotion=True),
+            Move(5, 2, 6, 3),
+            Move(5, 2, 6, 3, is_promotion=True),
+        ]
+
+    def test_後手歩の最終段への手は成のみ(self):
+        # 後手の最終段は rank 9
+        board = board_with((5, 8, Piece(Color.WHITE, PieceType.PAWN)))
+        assert generate_piece_moves(board, 5, 8) == [
+            Move(5, 8, 5, 9, is_promotion=True),
+        ]
+
+    def test_後手桂の8段目への手は成のみ(self):
+        # 後手桂の強制成りは rank 8〜9
+        board = board_with((5, 6, Piece(Color.WHITE, PieceType.KNIGHT)))
+        assert generate_piece_moves(board, 5, 6) == [
+            Move(5, 6, 4, 8, is_promotion=True),
+            Move(5, 6, 6, 8, is_promotion=True),
+        ]
+
+
+class Test成り候補_対象外:
+    def test_敵陣に触れない手は成り候補が付かない(self):
+        # 5五の先手銀の移動先は rank 4/6 のみで敵陣（rank 1〜3）に触れない
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.SILVER)))
+        assert generate_piece_moves(board, 5, 5) == generate_silver_moves(board, 5, 5)
+
+    @pytest.mark.parametrize(
+        "piece_type",
+        [PieceType.GOLD, PieceType.KING],
+        ids=["金", "玉"],
+    )
+    def test_金と玉は敵陣内でも成り候補が付かない(self, piece_type):
+        board = board_with((5, 2, Piece(Color.BLACK, piece_type)))
+        moves = generate_piece_moves(board, 5, 2)
+        assert all(not move.is_promotion for move in moves)
+        assert len(moves) > 0  # 動けないのではなく「成りが付かない」ことの確認
+
+    @pytest.mark.parametrize(
+        "piece_type",
+        [
+            PieceType.PROMOTED_PAWN,
+            PieceType.PROMOTED_LANCE,
+            PieceType.PROMOTED_KNIGHT,
+            PieceType.PROMOTED_SILVER,
+            PieceType.HORSE,
+            PieceType.DRAGON,
+        ],
+        ids=["と金", "成香", "成桂", "成銀", "馬", "竜"],
+    )
+    def test_成駒は敵陣内でも成り候補が付かない(self, piece_type):
+        board = board_with((5, 2, Piece(Color.BLACK, piece_type)))
+        moves = generate_piece_moves(board, 5, 2)
+        assert all(not move.is_promotion for move in moves)
+        assert len(moves) > 0
