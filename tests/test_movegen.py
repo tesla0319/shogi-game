@@ -1,4 +1,4 @@
-"""疑似合法手生成のテスト（SHOGI-2a〜2h: 基本8駒種、2i-1: 金系成駒4種）。
+"""疑似合法手生成のテスト（SHOGI-2a〜2h: 基本8駒種、2i: 成駒6種）。
 
 疑似合法手の範囲（盤外・味方駒マスの除外、走り駒の停止位置）のみを検証する。
 二歩・王手放置などの反則除外（SHOGI-3）、成り、駒打ちは対象外。
@@ -11,7 +11,9 @@ from shogi.initial_position import create_hirate_board
 from shogi.move import Move
 from shogi.movegen import (
     generate_bishop_moves,
+    generate_dragon_moves,
     generate_gold_moves,
+    generate_horse_moves,
     generate_king_moves,
     generate_knight_moves,
     generate_lance_moves,
@@ -1102,3 +1104,146 @@ class Test金系成駒の異常系:
     def test_盤外の座標を指定するとValueError(self, generate, piece_type, base_type):
         with pytest.raises(ValueError):
             generate(Board(), 0, 5)
+
+
+class Test馬の動き:
+    def test_中央では斜めの走りと縦横1マスの計20手(self):
+        # 空盤の5五の馬 → 角と同じ斜め16手 + 縦横の隣接4マス
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.HORSE)))
+        bishop_board = board_with((5, 5, Piece(Color.BLACK, PieceType.BISHOP)))
+        expected_sliding = [
+            Move(5, 5, move.to_file, move.to_rank)
+            for move in generate_bishop_moves(bishop_board, 5, 5)
+        ]
+        assert generate_horse_moves(board, 5, 5) == expected_sliding + [
+            Move(5, 5, 5, 4),  # 縦横1マス
+            Move(5, 5, 5, 6),
+            Move(5, 5, 4, 5),
+            Move(5, 5, 6, 5),
+        ]
+
+    def test_先手後手で動きは変わらない(self):
+        black = board_with((5, 5, Piece(Color.BLACK, PieceType.HORSE)))
+        white = board_with((5, 5, Piece(Color.WHITE, PieceType.HORSE)))
+        assert generate_horse_moves(black, 5, 5) == generate_horse_moves(white, 5, 5)
+
+    def test_縦横へは1マスより先に進めない(self):
+        # 走りは斜めだけ。縦横の2マス先（空きマス）は候補に含まれない
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.HORSE)))
+        moves = generate_horse_moves(board, 5, 5)
+        assert Move(5, 5, 5, 3) not in moves
+        assert Move(5, 5, 3, 5) not in moves
+
+    def test_斜めの走りは相手駒のマスで停止する(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.HORSE)),
+            (7, 7, Piece(Color.WHITE, PieceType.PAWN)),
+        )
+        moves = generate_horse_moves(board, 5, 5)
+        assert Move(5, 5, 7, 7) in moves  # 取る手
+        assert Move(5, 5, 8, 8) not in moves  # その先は不可
+
+    def test_縦横1マスも味方は除外され相手は含まれる(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.HORSE)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),  # 縦: 味方 → 除外
+            (4, 5, Piece(Color.WHITE, PieceType.PAWN)),  # 横: 相手 → 含む
+        )
+        moves = generate_horse_moves(board, 5, 5)
+        assert Move(5, 5, 5, 4) not in moves
+        assert Move(5, 5, 4, 5) in moves
+
+    def test_一一の角では対角線1本と縦横2マス(self):
+        board = board_with((1, 1, Piece(Color.BLACK, PieceType.HORSE)))
+        assert generate_horse_moves(board, 1, 1) == [
+            *[Move(1, 1, d, d) for d in range(2, 10)],  # 斜めの走り
+            Move(1, 1, 1, 2),  # 縦横1マス
+            Move(1, 1, 2, 1),
+        ]
+
+
+class Test馬の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_horse_moves(Board(), 5, 5)
+
+    def test_馬以外の駒を指定するとValueError(self):
+        # 成る前の角でも ValueError
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.BISHOP)))
+        with pytest.raises(ValueError):
+            generate_horse_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_horse_moves(Board(), 10, 5)
+
+
+class Test竜の動き:
+    def test_中央では縦横の走りと斜め1マスの計20手(self):
+        # 空盤の5五の竜 → 飛車と同じ縦横16手 + 斜めの隣接4マス
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.DRAGON)))
+        rook_board = board_with((5, 5, Piece(Color.BLACK, PieceType.ROOK)))
+        expected_sliding = [
+            Move(5, 5, move.to_file, move.to_rank)
+            for move in generate_rook_moves(rook_board, 5, 5)
+        ]
+        assert generate_dragon_moves(board, 5, 5) == expected_sliding + [
+            Move(5, 5, 4, 4),  # 斜め1マス
+            Move(5, 5, 4, 6),
+            Move(5, 5, 6, 4),
+            Move(5, 5, 6, 6),
+        ]
+
+    def test_先手後手で動きは変わらない(self):
+        black = board_with((5, 5, Piece(Color.BLACK, PieceType.DRAGON)))
+        white = board_with((5, 5, Piece(Color.WHITE, PieceType.DRAGON)))
+        assert generate_dragon_moves(black, 5, 5) == generate_dragon_moves(white, 5, 5)
+
+    def test_斜めへは1マスより先に進めない(self):
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.DRAGON)))
+        moves = generate_dragon_moves(board, 5, 5)
+        assert Move(5, 5, 3, 3) not in moves
+        assert Move(5, 5, 7, 7) not in moves
+
+    def test_縦横の走りは味方駒の手前で停止する(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.DRAGON)),
+            (5, 2, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        moves = generate_dragon_moves(board, 5, 5)
+        assert Move(5, 5, 5, 3) in moves  # 手前まで
+        assert Move(5, 5, 5, 2) not in moves  # 味方のマスは不可
+
+    def test_斜め1マスも味方は除外され相手は含まれる(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.DRAGON)),
+            (4, 4, Piece(Color.BLACK, PieceType.PAWN)),  # 斜め: 味方 → 除外
+            (6, 6, Piece(Color.WHITE, PieceType.PAWN)),  # 斜め: 相手 → 含む
+        )
+        moves = generate_dragon_moves(board, 5, 5)
+        assert Move(5, 5, 4, 4) not in moves
+        assert Move(5, 5, 6, 6) in moves
+
+    def test_九九の角では縦横2本と斜め1マス(self):
+        board = board_with((9, 9, Piece(Color.WHITE, PieceType.DRAGON)))
+        assert generate_dragon_moves(board, 9, 9) == [
+            *[Move(9, 9, 9, r) for r in range(8, 0, -1)],  # 縦の走り
+            *[Move(9, 9, f, 9) for f in range(8, 0, -1)],  # 横の走り
+            Move(9, 9, 8, 8),  # 斜め1マス
+        ]
+
+
+class Test竜の異常系:
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_dragon_moves(Board(), 5, 5)
+
+    def test_竜以外の駒を指定するとValueError(self):
+        # 成る前の飛車でも ValueError
+        board = board_with((5, 5, Piece(Color.BLACK, PieceType.ROOK)))
+        with pytest.raises(ValueError):
+            generate_dragon_moves(board, 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_dragon_moves(Board(), 5, 0)

@@ -1,7 +1,6 @@
 """駒の疑似合法手の生成（SHOGI-2）。
 
-基本8駒種（歩・香・桂・銀・金・玉・飛・角）と金系成駒4種
-（と金・成香・成桂・成銀）に対応。馬・竜・成り候補・駒打ちは未対応。
+盤上の全14駒種（基本8種 + 成駒6種）に対応。成り候補・駒打ちは未対応。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
@@ -306,3 +305,39 @@ def generate_promoted_silver_moves(board: Board, file: int, rank: int) -> list[M
         raise ValueError(f"({file}, {rank}) に成銀がありません: {piece!r}")
 
     return _gold_like_moves(board, file, rank, piece.color)
+
+
+def generate_horse_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの馬（角の成り）の疑似合法手を返す。
+
+    動きは「角の走り（斜め4方向）」+「縦横4方向への1マス」。
+    走り部分の停止規則は角と同じ。1マス部分は盤外と味方駒のマスを除外する。
+    候補は「斜めの走り → 縦横の1マス」の順に並ぶ。
+    指定マスが空きマス、または馬以外の駒の場合は ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.HORSE:
+        raise ValueError(f"({file}, {rank}) に馬がありません: {piece!r}")
+
+    # 縦横1マスのオフセットは飛車の走り方向と同じタプルなので定数を共用する
+    return _sliding_moves(
+        board, file, rank, piece.color, _BISHOP_DIRECTIONS
+    ) + _step_moves(board, file, rank, piece.color, _ROOK_DIRECTIONS)
+
+
+def generate_dragon_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの竜（飛車の成り）の疑似合法手を返す。
+
+    動きは「飛車の走り（縦横4方向）」+「斜め4方向への1マス」。
+    走り部分の停止規則は飛車と同じ。1マス部分は盤外と味方駒のマスを除外する。
+    候補は「縦横の走り → 斜めの1マス」の順に並ぶ。
+    指定マスが空きマス、または竜以外の駒の場合は ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None or piece.piece_type is not PieceType.DRAGON:
+        raise ValueError(f"({file}, {rank}) に竜がありません: {piece!r}")
+
+    # 斜め1マスのオフセットは角の走り方向と同じタプルなので定数を共用する
+    return _sliding_moves(
+        board, file, rank, piece.color, _ROOK_DIRECTIONS
+    ) + _step_moves(board, file, rank, piece.color, _BISHOP_DIRECTIONS)
