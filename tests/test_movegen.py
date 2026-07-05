@@ -18,6 +18,7 @@ from shogi.movegen import (
     generate_knight_moves,
     generate_lance_moves,
     generate_pawn_moves,
+    generate_piece_moves,
     generate_promoted_knight_moves,
     generate_promoted_lance_moves,
     generate_promoted_pawn_moves,
@@ -86,6 +87,13 @@ class Test移動先の駒:
             (5, 6, Piece(Color.WHITE, PieceType.SILVER)),
         )
         assert generate_pawn_moves(board, 5, 5) == []
+
+    def test_後手の歩も相手駒を取れる(self):
+        board = board_with(
+            (5, 5, Piece(Color.WHITE, PieceType.PAWN)),
+            (5, 6, Piece(Color.BLACK, PieceType.GOLD)),
+        )
+        assert generate_pawn_moves(board, 5, 5) == [Move(5, 5, 5, 6)]
 
 
 class Test平手初期局面:
@@ -200,6 +208,17 @@ class Test香車の停止:
         assert generate_lance_moves(board, 5, 1) == [
             Move(5, 1, 5, 2),
             Move(5, 1, 5, 3),
+        ]
+
+    def test_後手の香も相手駒のマスで停止する(self):
+        board = board_with(
+            (5, 1, Piece(Color.WHITE, PieceType.LANCE)),
+            (5, 4, Piece(Color.BLACK, PieceType.PAWN)),
+        )
+        assert generate_lance_moves(board, 5, 1) == [
+            Move(5, 1, 5, 2),
+            Move(5, 1, 5, 3),
+            Move(5, 1, 5, 4),  # 相手駒を取る手。その先（5五以降）は不可
         ]
 
 
@@ -1247,3 +1266,62 @@ class Test竜の異常系:
     def test_盤外の座標を指定するとValueError(self):
         with pytest.raises(ValueError):
             generate_dragon_moves(Board(), 5, 0)
+
+
+class Testディスパッチャ:
+    # 全14駒種と専用生成関数の対応（テスト側で独立に列挙する）
+    ALL_PIECE_CASES = [
+        (PieceType.PAWN, generate_pawn_moves),
+        (PieceType.LANCE, generate_lance_moves),
+        (PieceType.KNIGHT, generate_knight_moves),
+        (PieceType.SILVER, generate_silver_moves),
+        (PieceType.GOLD, generate_gold_moves),
+        (PieceType.BISHOP, generate_bishop_moves),
+        (PieceType.ROOK, generate_rook_moves),
+        (PieceType.KING, generate_king_moves),
+        (PieceType.PROMOTED_PAWN, generate_promoted_pawn_moves),
+        (PieceType.PROMOTED_LANCE, generate_promoted_lance_moves),
+        (PieceType.PROMOTED_KNIGHT, generate_promoted_knight_moves),
+        (PieceType.PROMOTED_SILVER, generate_promoted_silver_moves),
+        (PieceType.HORSE, generate_horse_moves),
+        (PieceType.DRAGON, generate_dragon_moves),
+    ]
+
+    @pytest.mark.parametrize(
+        ("piece_type", "dedicated"),
+        ALL_PIECE_CASES,
+        ids=[piece_type.name for piece_type, _ in ALL_PIECE_CASES],
+    )
+    def test_全14駒種で専用関数と同じ結果を返す(self, piece_type, dedicated):
+        board = board_with((5, 5, Piece(Color.BLACK, piece_type)))
+        assert generate_piece_moves(board, 5, 5) == dedicated(board, 5, 5)
+
+    def test_空きマスを指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_piece_moves(Board(), 5, 5)
+
+    def test_盤外の座標を指定するとValueError(self):
+        with pytest.raises(ValueError):
+            generate_piece_moves(Board(), 0, 5)
+
+    def test_平手初期局面の先手の疑似合法手は全体で30手(self):
+        # 既知値との突き合わせ: 平手初期局面の先手の手は30手
+        # （歩9 + 香2 + 銀4 + 金6 + 玉3 + 飛6。桂と角は動けない）
+        board = create_hirate_board()
+        moves = []
+        for file in range(1, 10):
+            for rank in range(1, 10):
+                piece = board.get_piece(file, rank)
+                if piece is not None and piece.color is Color.BLACK:
+                    moves.extend(generate_piece_moves(board, file, rank))
+        assert len(moves) == 30
+
+    def test_平手初期局面の後手の疑似合法手も30手(self):
+        board = create_hirate_board()
+        moves = []
+        for file in range(1, 10):
+            for rank in range(1, 10):
+                piece = board.get_piece(file, rank)
+                if piece is not None and piece.color is Color.WHITE:
+                    moves.extend(generate_piece_moves(board, file, rank))
+        assert len(moves) == 30

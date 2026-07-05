@@ -100,17 +100,8 @@ def generate_lance_moves(board: Board, file: int, rank: int) -> list[Move]:
     if piece is None or piece.piece_type is not PieceType.LANCE:
         raise ValueError(f"({file}, {rank}) に香車がありません: {piece!r}")
 
-    moves = []
-    to_rank = rank + _FORWARD[piece.color]
-    while 1 <= to_rank <= BOARD_SIZE:
-        target = board.get_piece(file, to_rank)
-        if target is not None and target.color is piece.color:
-            break  # 味方駒の手前で停止（そのマスは含めない）
-        moves.append(Move(file, rank, file, to_rank))
-        if target is not None:
-            break  # 相手駒のマスで停止（そのマスまでは含める）
-        to_rank += _FORWARD[piece.color]
-    return moves
+    # 前方向1本の走り。停止規則は他の走り駒と共通
+    return _sliding_moves(board, file, rank, piece.color, [(0, _FORWARD[piece.color])])
 
 
 def generate_knight_moves(board: Board, file: int, rank: int) -> list[Move]:
@@ -341,3 +332,39 @@ def generate_dragon_moves(board: Board, file: int, rank: int) -> list[Move]:
     return _sliding_moves(
         board, file, rank, piece.color, _ROOK_DIRECTIONS
     ) + _step_moves(board, file, rank, piece.color, _BISHOP_DIRECTIONS)
+
+
+# 駒種 → 疑似合法手の生成関数。全14駒種を網羅する
+_MOVE_GENERATORS = {
+    PieceType.PAWN: generate_pawn_moves,
+    PieceType.LANCE: generate_lance_moves,
+    PieceType.KNIGHT: generate_knight_moves,
+    PieceType.SILVER: generate_silver_moves,
+    PieceType.GOLD: generate_gold_moves,
+    PieceType.BISHOP: generate_bishop_moves,
+    PieceType.ROOK: generate_rook_moves,
+    PieceType.KING: generate_king_moves,
+    PieceType.PROMOTED_PAWN: generate_promoted_pawn_moves,
+    PieceType.PROMOTED_LANCE: generate_promoted_lance_moves,
+    PieceType.PROMOTED_KNIGHT: generate_promoted_knight_moves,
+    PieceType.PROMOTED_SILVER: generate_promoted_silver_moves,
+    PieceType.HORSE: generate_horse_moves,
+    PieceType.DRAGON: generate_dragon_moves,
+}
+
+
+def generate_piece_moves(board: Board, file: int, rank: int) -> list[Move]:
+    """指定マスの駒の疑似合法手を返す（駒種に応じた生成関数への入口）。
+
+    呼び出し側が駒種で分岐しなくて済むようにするためのディスパッチャ。
+    合法手判定（SHOGI-3）で相手の全駒の利きを列挙する際もここを使う。
+    指定マスが空きマスの場合、または対応する生成関数がない駒種の場合は
+    ValueError を送出する。
+    """
+    piece = board.get_piece(file, rank)
+    if piece is None:
+        raise ValueError(f"({file}, {rank}) は空きマスです")
+    generator = _MOVE_GENERATORS.get(piece.piece_type)
+    if generator is None:
+        raise ValueError(f"未対応の駒種です: {piece.piece_type}")
+    return generator(board, file, rank)
