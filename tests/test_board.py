@@ -58,6 +58,35 @@ class TestBoardマスの読み書き:
         assert board.get_piece(file, rank) == piece
 
 
+class TestBoardの複製:
+    def test_複製は元と同じ駒配置を持つ(self):
+        board = Board()
+        board.set_piece(5, 5, Piece(Color.BLACK, PieceType.PAWN))
+        board.set_piece(2, 8, Piece(Color.WHITE, PieceType.ROOK))
+        clone = board.copy()
+        assert clone.get_piece(5, 5) == Piece(Color.BLACK, PieceType.PAWN)
+        assert clone.get_piece(2, 8) == Piece(Color.WHITE, PieceType.ROOK)
+        assert clone.get_piece(1, 1) is None
+
+    def test_複製を変更しても元の盤面に波及しない(self):
+        board = Board()
+        board.set_piece(5, 5, Piece(Color.BLACK, PieceType.PAWN))
+        clone = board.copy()
+        clone.set_piece(5, 5, None)
+        clone.set_piece(1, 1, Piece(Color.WHITE, PieceType.GOLD))
+        # 元の盤面は変わらない
+        assert board.get_piece(5, 5) == Piece(Color.BLACK, PieceType.PAWN)
+        assert board.get_piece(1, 1) is None
+
+    def test_元の盤面を変更しても複製に波及しない(self):
+        board = Board()
+        board.set_piece(5, 5, Piece(Color.BLACK, PieceType.PAWN))
+        clone = board.copy()
+        board.set_piece(5, 5, Piece(Color.WHITE, PieceType.SILVER))
+        # 複製は複製した時点の状態を保つ
+        assert clone.get_piece(5, 5) == Piece(Color.BLACK, PieceType.PAWN)
+
+
 class TestBoard盤外の座標:
     @pytest.mark.parametrize(
         ("file", "rank"),

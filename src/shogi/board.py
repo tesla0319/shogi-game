@@ -27,6 +27,18 @@ class Board:
             [None] * BOARD_SIZE for _ in range(BOARD_SIZE)
         ]
 
+    def copy(self) -> "Board":
+        """盤面の複製を返す。元の盤面とマスの状態を共有しない。
+
+        各マスの Piece は不変（frozen）なので、マスのリストだけを新しく
+        作れば安全に複製できる（Piece 自体は共有してよい）。
+        合法手判定（SHOGI-3）で「ある手を指した後の盤面」を、元の盤面を
+        壊さずに作るために使う。
+        """
+        clone = Board()
+        clone._squares = [row[:] for row in self._squares]
+        return clone
+
     def get_piece(self, file: int, rank: int) -> Piece | None:
         """指定マスの駒を返す。空きマスなら None を返す。"""
         self._validate_square(file, rank)
