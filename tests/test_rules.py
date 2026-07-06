@@ -11,7 +11,13 @@ import pytest
 from shogi.board import Board
 from shogi.move import Move
 from shogi.piece import Color, Piece, PieceType
-from shogi.rules import board_after_move, find_king, is_attacked, is_in_check
+from shogi.rules import (
+    board_after_move,
+    find_king,
+    generate_legal_moves,
+    is_attacked,
+    is_in_check,
+)
 from shogi.sfen import board_from_sfen
 
 
@@ -245,3 +251,73 @@ class Test王手検出:
         board = board_from_sfen(_HIRATE_SFEN)
         assert is_in_check(board, Color.BLACK) is False
         assert is_in_check(board, Color.WHITE) is False
+
+
+# ---- SHOGI-3c: 合法手生成 ----
+
+
+class Test合法手の既知局面:
+    def test_平手初期局面の先手合法手は30手(self):
+        # 将棋の平手初期局面の合法手数は 30 手（既知の答え）
+        board = board_from_sfen(_HIRATE_SFEN)
+        assert len(generate_legal_moves(board, Color.BLACK)) == 30
+
+    def test_平手初期局面の後手合法手も30手(self):
+        board = board_from_sfen(_HIRATE_SFEN)
+        assert len(generate_legal_moves(board, Color.WHITE)) == 30
+
+    def test_その色の駒が無ければ合法手は空(self):
+        board = board_with((5, 5, Piece(Color.WHITE, PieceType.KING)))
+        assert generate_legal_moves(board, Color.BLACK) == []
+
+
+class Testピンの除外:
+    def test_ピンされた駒は玉を守る筋の上でしか動けない(self):
+        # 5九先手玉 — 5五先手金 — 5一後手飛 が同じ筋。金は飛にピンされている
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.KING)),
+            (5, 5, Piece(Color.BLACK, PieceType.GOLD)),
+            (5, 1, Piece(Color.WHITE, PieceType.ROOK)),
+        )
+        legal = generate_legal_moves(board, Color.BLACK)
+        # 筋を外れる横move は自玉が飛の利きにさらされるので除外される
+        assert Move(5, 5, 4, 5) not in legal
+        assert Move(5, 5, 6, 5) not in legal
+        # 同じ筋の上に留まる move は玉を守り続けるので合法
+        assert Move(5, 5, 5, 4) in legal
+        assert Move(5, 5, 5, 6) in legal
+
+
+class Test王手中の合法手:
+    def test_王手駒を取る手と合駒が残り王手放置は除外される(self):
+        # 5五先手玉に 5一後手飛が王手。4二先手金は「飛を取る」「合駒」で解消できる
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KING)),
+            (5, 1, Piece(Color.WHITE, PieceType.ROOK)),
+            (4, 2, Piece(Color.BLACK, PieceType.GOLD)),
+        )
+        legal = generate_legal_moves(board, Color.BLACK)
+        assert Move(4, 2, 5, 1) in legal  # 王手駒（飛）を取って解消
+        assert Move(4, 2, 5, 2) in legal  # 合駒で遮って解消
+        assert Move(4, 2, 4, 1) not in legal  # 王手を解消しない手（王手放置）は除外
+
+    def test_玉が王手の筋に留まる移動は除外される(self):
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KING)),
+            (5, 1, Piece(Color.WHITE, PieceType.ROOK)),
+        )
+        legal = generate_legal_moves(board, Color.BLACK)
+        assert Move(5, 5, 5, 6) not in legal  # 同じ筋に留まる＝まだ王手
+        assert Move(5, 5, 4, 5) in legal  # 筋を外れて逃げる手は合法
+
+
+class Test自殺手の除外:
+    def test_玉は相手の利きへ飛び込めない(self):
+        # 5五先手玉。1四後手飛が4段目を横に利かせている
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KING)),
+            (1, 4, Piece(Color.WHITE, PieceType.ROOK)),
+        )
+        legal = generate_legal_moves(board, Color.BLACK)
+        assert Move(5, 5, 5, 4) not in legal  # 飛の利き（4段目）へ飛び込む自殺手
+        assert Move(5, 5, 5, 6) in legal  # 利きの無い方へ逃げる手は合法

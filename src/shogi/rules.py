@@ -2,8 +2,8 @@
 
 疑似合法手の生成（movegen）とは別の責務。SHOGI-3a で「ある手を指した後の
 盤面」を作るシミュレート（board_after_move）、SHOGI-3b で王手検出
-（find_king / is_attacked / is_in_check）を提供する。自殺手の除外・合法手の
-確定（generate_legal_moves）は後続のサブフェーズ（3c）で追加する。
+（find_king / is_attacked / is_in_check）、SHOGI-3c で合法手の確定
+（generate_legal_moves）を提供する。
 
 持ち駒・駒打ちは扱わない（SHOGI-4 の責務）。取った駒は盤から除去するだけで、
 持ち駒には加えない。取った駒種が必要な処理（持ち駒への追加）は、着手適用の
@@ -106,3 +106,28 @@ def is_in_check(board: Board, color: Color) -> bool:
     king_file, king_rank = king_square
     opponent = Color.WHITE if color is Color.BLACK else Color.BLACK
     return is_attacked(board, king_file, king_rank, opponent)
+
+
+def generate_legal_moves(board: Board, color: Color) -> list[Move]:
+    """color の合法手（盤上移動のみ）を返す。
+
+    盤上の color の各駒の疑似合法手（movegen.generate_piece_moves、成り込み）
+    から、指した後に自玉が王手になる手を除外したものが合法手。
+    「指した後に王手か」の単一フィルタで、王手放置・自殺手・ピンによる自己王手を
+    まとめて除外する（王手中かどうかで処理を分けない）。王手駒を取る手・合駒で
+    遮る手は王手が解消されるので自然に残る。
+
+    持ち駒・駒打ちは扱わない（SHOGI-4）。手番は color 引数で受け取り、
+    Position 概念は導入しない。
+    """
+    legal = []
+    for rank in range(1, BOARD_SIZE + 1):
+        for file in range(1, BOARD_SIZE + 1):
+            piece = board.get_piece(file, rank)
+            if piece is None or piece.color is not color:
+                continue
+            for move in generate_piece_moves(board, file, rank):
+                next_board = board_after_move(board, move)
+                if not is_in_check(next_board, color):
+                    legal.append(move)
+    return legal
