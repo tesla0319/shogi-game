@@ -10,11 +10,13 @@ import dataclasses
 import pytest
 
 from shogi.board import Board
+from shogi.hand import Hand
 from shogi.initial_position import create_hirate_board
 from shogi.move import Move
 from shogi.movegen import (
     _expand_promotions,
     generate_bishop_moves,
+    generate_drop_moves,
     generate_dragon_moves,
     generate_gold_moves,
     generate_horse_moves,
@@ -1521,3 +1523,64 @@ class Test成り候補_対象外:
         moves = generate_piece_moves(board, 5, 2)
         assert all(not move.is_promotion for move in moves)
         assert len(moves) > 0
+
+
+class Test駒打ち候補の生成:
+    """generate_drop_moves（SHOGI-4）。空きマスへの Move.drop 候補のみを生成し、
+    二歩・行き所のない駒・打ち歩詰めは検証しない（本フェーズ対象外）。"""
+
+    def test_持ち駒が無ければ空リスト(self):
+        assert generate_drop_moves(Board(), Hand()) == []
+
+    def test_歩1枚なら空きマス数分の候補が出る(self):
+        # 空盤（81マス全て空き）に歩を1枚。81マスすべてが打ち先候補になる
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        moves = generate_drop_moves(Board(), hand)
+        assert len(moves) == 81
+        assert all(move.is_drop for move in moves)
+        assert all(move.drop_piece_type is PieceType.PAWN for move in moves)
+
+    def test_埋まっているマスには打てない(self):
+        # 1五に駒を置くと、そのマスだけ候補から除外され 80 マスになる
+        board = board_with((1, 5, Piece(Color.WHITE, PieceType.PAWN)))
+        hand = Hand()
+        hand.add(PieceType.SILVER)
+        moves = generate_drop_moves(board, hand)
+        assert len(moves) == 80
+        assert Move.drop(PieceType.SILVER, 1, 5) not in moves
+
+    def test_駒種ごとに候補が出る(self):
+        # 歩と金を1枚ずつ。空盤なので各 81 マス、合計 162 候補
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        hand.add(PieceType.GOLD)
+        moves = generate_drop_moves(Board(), hand)
+        assert len(moves) == 162
+        pawn_drops = [m for m in moves if m.drop_piece_type is PieceType.PAWN]
+        gold_drops = [m for m in moves if m.drop_piece_type is PieceType.GOLD]
+        assert len(pawn_drops) == 81
+        assert len(gold_drops) == 81
+
+    def test_同じ駒を複数枚持っても候補は重複しない(self):
+        # 歩を2枚持っていても、1マスにつき候補は1つ（打つのは1枚のため）
+        hand = Hand()
+        hand.add(PieceType.PAWN, 2)
+        moves = generate_drop_moves(Board(), hand)
+        assert len(moves) == 81
+        assert len(moves) == len(set(moves))  # 重複なし
+
+    def test_生成Moveの引数が正しく対応する(self):
+        # drop_piece_type / to_file / to_rank が指定どおりに設定されること
+        board = board_with(*[
+            (f, r, Piece(Color.BLACK, PieceType.PAWN))
+            for r in range(1, 10)
+            for f in range(1, 10)
+            if not (f == 3 and r == 4)  # 3四だけ空ける
+        ])
+        hand = Hand()
+        hand.add(PieceType.KNIGHT)
+        moves = generate_drop_moves(board, hand)
+        assert moves == [Move.drop(PieceType.KNIGHT, 3, 4)]
+        assert moves[0].to_file == 3
+        assert moves[0].to_rank == 4

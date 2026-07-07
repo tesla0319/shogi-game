@@ -1,10 +1,12 @@
-"""駒の疑似合法手の生成（SHOGI-2）。
+"""駒の疑似合法手の生成（SHOGI-2 / 駒打ち候補は SHOGI-4）。
 
-盤上の全14駒種（基本8種 + 成駒6種）と成り/不成の候補に対応。駒打ちは未対応。
+盤上の全14駒種（基本8種 + 成駒6種）と成り/不成の候補に対応。持ち駒からの
+駒打ち候補は generate_drop_moves が空きマスへの Move.drop として生成する。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
 除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
-責務のため、ここでは行わない。駒打ちも後続で扱う。
+責務のため、ここでは行わない。駒打ちも二歩・行き所のない駒・打ち歩詰めの
+判定は行わず、空きマスへの候補生成に留める。
 
 成り候補は駒種ごとの generate_*_moves ではなく、ディスパッチャ
 generate_piece_moves が _expand_promotions で付与する。駒の動きのパターンと
@@ -12,6 +14,7 @@ generate_piece_moves が _expand_promotions で付与する。駒の動きのパ
 """
 
 from shogi.board import BOARD_SIZE, Board
+from shogi.hand import Hand
 from shogi.move import Move
 from shogi.piece import Color, Piece, PieceType
 
@@ -451,3 +454,41 @@ def generate_piece_moves(board: Board, file: int, rank: int) -> list[Move]:
     if generator is None:
         raise ValueError(f"未対応の駒種です: {piece.piece_type}")
     return _expand_promotions(piece, generator(board, file, rank))
+
+
+# 打てる駒種の列挙順。持ち駒にできる基本7種を PieceType の定義順で固定し、
+# 生成される駒打ち候補の並びを決定的にする（Hand の内部は順序を持たない集合のため、
+# hand を走査すると順序が不定になる）。
+_DROPPABLE_TYPES = (
+    PieceType.PAWN,
+    PieceType.LANCE,
+    PieceType.KNIGHT,
+    PieceType.SILVER,
+    PieceType.GOLD,
+    PieceType.BISHOP,
+    PieceType.ROOK,
+)
+
+
+def generate_drop_moves(board: Board, hand: Hand) -> list[Move]:
+    """hand の持ち駒を空きマスへ打つ疑似合法手（駒打ち候補）を返す。
+
+    持ち駒のある駒種それぞれについて、盤上の空きマス全てへの Move.drop を作る。
+    同じ駒を複数枚持っていても、1マスにつき候補は1つ（打つのは1枚なので枚数分は
+    増やさない）。生成順は _DROPPABLE_TYPES の順 × (rank 昇順, file 昇順)。
+
+    このフェーズは「打てる空きマスへの候補生成」に限定し、合法性
+    （二歩・行き所のない駒・打ち歩詰め）は検証しない。それらは後続の責務。
+    手番 color を引数に取らないのは、Move.drop が色を持たず空きマス判定も色に
+    依存しないため。色が要るのは二歩・行き所判定だが、いずれも本フェーズ対象外。
+    """
+    moves = []
+    for piece_type in _DROPPABLE_TYPES:
+        # 枚数は「打てるか否か（1枚以上か）」だけ見る。候補数は枚数に依らない
+        if hand.count(piece_type) == 0:
+            continue
+        for rank in range(1, BOARD_SIZE + 1):
+            for file in range(1, BOARD_SIZE + 1):
+                if board.get_piece(file, rank) is None:
+                    moves.append(Move.drop(piece_type, file, rank))
+    return moves
