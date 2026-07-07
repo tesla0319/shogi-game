@@ -4,9 +4,9 @@
 駒打ち候補は generate_drop_moves が空きマスへの Move.drop として生成する。
 
 疑似合法手 = 駒の動きとして可能な移動先のうち、盤外と味方駒のあるマスを
-除いたもの。王手放置・二歩などの反則の除外（合法手判定）は SHOGI-3 の
-責務のため、ここでは行わない。駒打ちも二歩・行き所のない駒・打ち歩詰めの
-判定は行わず、空きマスへの候補生成に留める。
+除いたもの。盤上移動については王手放置などの反則除外（合法手判定）は SHOGI-3 の
+責務のため、ここでは行わない。駒打ち候補は二歩・行き所のない駒までは除外するが、
+打ち歩詰め・王手放置は判定しない（後続の責務）。
 
 成り候補は駒種ごとの generate_*_moves ではなく、ディスパッチャ
 generate_piece_moves が _expand_promotions で付与する。駒の動きのパターンと
@@ -470,17 +470,53 @@ _DROPPABLE_TYPES = (
 )
 
 
-def generate_drop_moves(board: Board, hand: Hand) -> list[Move]:
-    """hand の持ち駒を空きマスへ打つ疑似合法手（駒打ち候補）を返す。
+def _has_own_unpromoted_pawn(board: Board, color: Color, file: int) -> bool:
+    """指定ファイルに color の未成の歩があるか（二歩判定用）。
 
-    持ち駒のある駒種それぞれについて、盤上の空きマス全てへの Move.drop を作る。
-    同じ駒を複数枚持っていても、1マスにつき候補は1つ（打つのは1枚なので枚数分は
-    増やさない）。生成順は _DROPPABLE_TYPES の順 × (rank 昇順, file 昇順)。
+    二歩の対象は「未成の歩」のみ。と金（PROMOTED_PAWN）は歩ではないので数えず、
+    相手の歩も自分の二歩には関係しないため、color 一致かつ PAWN のみを数える。
+    """
+    for rank in range(1, BOARD_SIZE + 1):
+        piece = board.get_piece(file, rank)
+        if (
+            piece is not None
+            and piece.color is color
+            and piece.piece_type is PieceType.PAWN
+        ):
+            return True
+    return False
 
-    このフェーズは「打てる空きマスへの候補生成」に限定し、合法性
-    （二歩・行き所のない駒・打ち歩詰め）は検証しない。それらは後続の責務。
-    手番 color を引数に取らないのは、Move.drop が色を持たず空きマス判定も色に
-    依存しないため。色が要るのは二歩・行き所判定だが、いずれも本フェーズ対象外。
+
+def _can_drop_on(
+    board: Board, piece_type: PieceType, color: Color, file: int, rank: int
+) -> bool:
+    """(file, rank) へ piece_type を打てるか（二歩・行き所のない駒の除外）を返す。
+
+    - 行き所のない駒: 打った先で二度と動けない段には打てない。駒打ちは成って
+      打てないので「盤上移動なら強制成りになる段（_must_promote）＝打てない段」と
+      一致する。深さ規則（歩香=最奥1段・桂=最奥2段）を1箇所に保つため流用する。
+    - 二歩: 歩を打つとき、同じファイルに自分の未成の歩があれば打てない。
+
+    打ち歩詰め・王手放置は本フェーズ対象外（判定しない）。
+    """
+    if _must_promote(piece_type, color, rank):
+        return False
+    if piece_type is PieceType.PAWN and _has_own_unpromoted_pawn(board, color, file):
+        return False
+    return True
+
+
+def generate_drop_moves(board: Board, hand: Hand, color: Color) -> list[Move]:
+    """color 側が hand の持ち駒を空きマスへ打つ疑似合法手（駒打ち候補）を返す。
+
+    持ち駒のある駒種それぞれについて、盤上の空きマスのうち二歩・行き所のない駒に
+    ならないマスへの Move.drop を作る。同じ駒を複数枚持っていても、1マスにつき
+    候補は1つ（打つのは1枚なので枚数分は増やさない）。生成順は _DROPPABLE_TYPES の
+    順 × (rank 昇順, file 昇順)。
+
+    除外する反則は二歩と行き所のない駒のみ。打ち歩詰め・王手放置は判定しない
+    （後続の責務）。手番 color は二歩（自分の歩か）と行き所（先後で禁段が反転）の
+    判定に使う。
     """
     moves = []
     for piece_type in _DROPPABLE_TYPES:
@@ -489,6 +525,9 @@ def generate_drop_moves(board: Board, hand: Hand) -> list[Move]:
             continue
         for rank in range(1, BOARD_SIZE + 1):
             for file in range(1, BOARD_SIZE + 1):
-                if board.get_piece(file, rank) is None:
-                    moves.append(Move.drop(piece_type, file, rank))
+                if board.get_piece(file, rank) is not None:
+                    continue  # 空きマスにしか打てない
+                if not _can_drop_on(board, piece_type, color, file, rank):
+                    continue  # 二歩・行き所のない駒を除外
+                moves.append(Move.drop(piece_type, file, rank))
     return moves

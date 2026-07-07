@@ -1526,61 +1526,157 @@ class Test成り候補_対象外:
 
 
 class Test駒打ち候補の生成:
-    """generate_drop_moves（SHOGI-4）。空きマスへの Move.drop 候補のみを生成し、
-    二歩・行き所のない駒・打ち歩詰めは検証しない（本フェーズ対象外）。"""
+    """generate_drop_moves（SHOGI-4）。空きマスへの Move.drop 候補を生成し、
+    二歩・行き所のない駒までは除外する。打ち歩詰め・王手放置は対象外。"""
 
     def test_持ち駒が無ければ空リスト(self):
-        assert generate_drop_moves(Board(), Hand()) == []
+        assert generate_drop_moves(Board(), Hand(), Color.BLACK) == []
 
-    def test_歩1枚なら空きマス数分の候補が出る(self):
-        # 空盤（81マス全て空き）に歩を1枚。81マスすべてが打ち先候補になる
+    def test_制約の無い駒は空きマス数分の候補が出る(self):
+        # 金は二歩・行き所いずれの制約も受けない。空盤なら81マス全てが打ち先
         hand = Hand()
-        hand.add(PieceType.PAWN)
-        moves = generate_drop_moves(Board(), hand)
+        hand.add(PieceType.GOLD)
+        moves = generate_drop_moves(Board(), hand, Color.BLACK)
         assert len(moves) == 81
         assert all(move.is_drop for move in moves)
-        assert all(move.drop_piece_type is PieceType.PAWN for move in moves)
+        assert all(move.drop_piece_type is PieceType.GOLD for move in moves)
 
     def test_埋まっているマスには打てない(self):
-        # 1五に駒を置くと、そのマスだけ候補から除外され 80 マスになる
+        # 銀（制約なし）。1五を埋めるとそのマスだけ除外され 80 マスになる
         board = board_with((1, 5, Piece(Color.WHITE, PieceType.PAWN)))
         hand = Hand()
         hand.add(PieceType.SILVER)
-        moves = generate_drop_moves(board, hand)
+        moves = generate_drop_moves(board, hand, Color.BLACK)
         assert len(moves) == 80
         assert Move.drop(PieceType.SILVER, 1, 5) not in moves
 
     def test_駒種ごとに候補が出る(self):
-        # 歩と金を1枚ずつ。空盤なので各 81 マス、合計 162 候補
+        # 金と銀を1枚ずつ（どちらも制約なし）。空盤なので各 81 マス、合計 162 候補
         hand = Hand()
-        hand.add(PieceType.PAWN)
         hand.add(PieceType.GOLD)
-        moves = generate_drop_moves(Board(), hand)
+        hand.add(PieceType.SILVER)
+        moves = generate_drop_moves(Board(), hand, Color.BLACK)
         assert len(moves) == 162
-        pawn_drops = [m for m in moves if m.drop_piece_type is PieceType.PAWN]
         gold_drops = [m for m in moves if m.drop_piece_type is PieceType.GOLD]
-        assert len(pawn_drops) == 81
+        silver_drops = [m for m in moves if m.drop_piece_type is PieceType.SILVER]
         assert len(gold_drops) == 81
+        assert len(silver_drops) == 81
 
     def test_同じ駒を複数枚持っても候補は重複しない(self):
-        # 歩を2枚持っていても、1マスにつき候補は1つ（打つのは1枚のため）
+        # 金を2枚持っていても、1マスにつき候補は1つ（打つのは1枚のため）
         hand = Hand()
-        hand.add(PieceType.PAWN, 2)
-        moves = generate_drop_moves(Board(), hand)
+        hand.add(PieceType.GOLD, 2)
+        moves = generate_drop_moves(Board(), hand, Color.BLACK)
         assert len(moves) == 81
         assert len(moves) == len(set(moves))  # 重複なし
 
     def test_生成Moveの引数が正しく対応する(self):
-        # drop_piece_type / to_file / to_rank が指定どおりに設定されること
+        # drop_piece_type / to_file / to_rank が指定どおりに設定されること。
+        # 桂を 3四（先手が打てる段）だけ空けた盤に打たせ、単一候補で確認する
         board = board_with(*[
-            (f, r, Piece(Color.BLACK, PieceType.PAWN))
+            (f, r, Piece(Color.WHITE, PieceType.GOLD))
             for r in range(1, 10)
             for f in range(1, 10)
-            if not (f == 3 and r == 4)  # 3四だけ空ける
+            if not (f == 3 and r == 4)  # 3四だけ空ける（相手駒で埋めるので二歩は無関係）
         ])
         hand = Hand()
         hand.add(PieceType.KNIGHT)
-        moves = generate_drop_moves(board, hand)
+        moves = generate_drop_moves(board, hand, Color.BLACK)
         assert moves == [Move.drop(PieceType.KNIGHT, 3, 4)]
         assert moves[0].to_file == 3
         assert moves[0].to_rank == 4
+
+
+class Test二歩の除外:
+    """二歩: 同じ筋に自分の未成の歩があると、その筋へは歩を打てない。"""
+
+    def test_自分の歩がある筋には打てない(self):
+        # 5筋に先手の歩。先手の歩打ち候補から 5筋が全て消える
+        board = board_with((5, 7, Piece(Color.BLACK, PieceType.PAWN)))
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        moves = generate_drop_moves(board, hand, Color.BLACK)
+        assert all(move.to_file != 5 for move in moves)
+
+    def test_他の筋には打てる(self):
+        # 5筋以外へは（行き所制約に触れない段なら）打てる
+        board = board_with((5, 7, Piece(Color.BLACK, PieceType.PAWN)))
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        moves = generate_drop_moves(board, hand, Color.BLACK)
+        assert Move.drop(PieceType.PAWN, 4, 5) in moves
+
+    def test_相手の歩は二歩に数えない(self):
+        # 5筋の歩が後手のものなら、先手は5筋に打てる（自分の歩ではない）
+        board = board_with((5, 3, Piece(Color.WHITE, PieceType.PAWN)))
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        moves = generate_drop_moves(board, hand, Color.BLACK)
+        assert Move.drop(PieceType.PAWN, 5, 5) in moves
+
+    def test_と金は二歩に数えない(self):
+        # 5筋の駒がと金（成った歩）なら、それは「歩」ではないので5筋に打てる
+        board = board_with((5, 3, Piece(Color.BLACK, PieceType.PROMOTED_PAWN)))
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        moves = generate_drop_moves(board, hand, Color.BLACK)
+        assert Move.drop(PieceType.PAWN, 5, 5) in moves
+
+    def test_歩以外の駒は同筋に自分の歩があっても打てる(self):
+        # 二歩は歩打ちにのみ適用。金は同筋に自分の歩があっても打てる
+        board = board_with((5, 7, Piece(Color.BLACK, PieceType.PAWN)))
+        hand = Hand()
+        hand.add(PieceType.GOLD)
+        moves = generate_drop_moves(board, hand, Color.BLACK)
+        assert Move.drop(PieceType.GOLD, 5, 5) in moves
+
+
+class Test行き所のない駒の除外:
+    """打った先で二度と動けない段には打てない（駒打ちは成って打てないため）。"""
+
+    @pytest.mark.parametrize(
+        "piece_type, dead_ranks",
+        [
+            (PieceType.PAWN, [1]),
+            (PieceType.LANCE, [1]),
+            (PieceType.KNIGHT, [1, 2]),
+        ],
+        ids=["歩", "香", "桂"],
+    )
+    def test_先手は最奥段に打てない(self, piece_type, dead_ranks):
+        hand = Hand()
+        hand.add(piece_type)
+        moves = generate_drop_moves(Board(), hand, Color.BLACK)
+        # 禁段には1つも無く、その1つ手前の段には打てる
+        for rank in dead_ranks:
+            assert all(move.to_rank != rank for move in moves)
+        assert any(move.to_rank == max(dead_ranks) + 1 for move in moves)
+
+    @pytest.mark.parametrize(
+        "piece_type, dead_ranks",
+        [
+            (PieceType.PAWN, [9]),
+            (PieceType.LANCE, [9]),
+            (PieceType.KNIGHT, [8, 9]),
+        ],
+        ids=["歩", "香", "桂"],
+    )
+    def test_後手は最奥段に打てない(self, piece_type, dead_ranks):
+        hand = Hand()
+        hand.add(piece_type)
+        moves = generate_drop_moves(Board(), hand, Color.WHITE)
+        for rank in dead_ranks:
+            assert all(move.to_rank != rank for move in moves)
+        assert any(move.to_rank == min(dead_ranks) - 1 for move in moves)
+
+    @pytest.mark.parametrize(
+        "piece_type",
+        [PieceType.GOLD, PieceType.SILVER, PieceType.BISHOP, PieceType.ROOK],
+        ids=["金", "銀", "角", "飛"],
+    )
+    def test_金銀角飛は最奥段でも打てる(self, piece_type):
+        # 行き所制約を受けない駒は、先手なら1段目にも打てる
+        hand = Hand()
+        hand.add(piece_type)
+        moves = generate_drop_moves(Board(), hand, Color.BLACK)
+        assert Move.drop(piece_type, 5, 1) in moves
