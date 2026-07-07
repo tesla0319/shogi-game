@@ -138,8 +138,39 @@ def is_in_check(board: Board, color: Color) -> bool:
     return is_attacked(board, king_file, king_rank, opponent)
 
 
+def _is_uchifuzume(board_after_drop: Board, move: Move, color: Color) -> bool:
+    """歩打ち move が相手玉を詰ませている（打ち歩詰め＝反則）かを返す。
+
+    打ち歩詰めは「歩を打って相手を詰ます」ことのみを禁じる反則。歩以外の打ち・
+    盤上移動は対象外なので、まず「歩打ちか」で早期に False を返す。歩打ちでも、
+    相手玉が王手でなければ詰みではないので False。王手のときだけ相手に回避手が
+    あるかを調べ、1つも無ければ打ち歩詰めと判定する。
+
+    MVP の割り切り: 相手の回避手は「盤上移動のみ」で判定する（generate_legal_moves を
+    hand なしで呼ぶ）。相手の持ち駒による合駒は、着手後の正確な持ち駒管理が未実装の
+    ため今回は網羅しない。この分だけ判定は「打ち歩詰めと見なしすぎる」側に倒れうる。
+    """
+    if not (move.is_drop and move.drop_piece_type is PieceType.PAWN):
+        return False
+
+    opponent = Color.WHITE if color is Color.BLACK else Color.BLACK
+    if not is_in_check(board_after_drop, opponent):
+        return False  # そもそも王手でなければ詰みではない
+
+    # 相手の回避手を数える。check_uchifuzume=False で「相手の応手の打ち歩詰め判定」を
+    # 止め、無限再帰を防ぐ（回避手が1つでもあれば打ち歩詰めではない）。
+    escapes = generate_legal_moves(
+        board_after_drop, opponent, check_uchifuzume=False
+    )
+    return len(escapes) == 0
+
+
 def generate_legal_moves(
-    board: Board, color: Color, hand: Hand | None = None
+    board: Board,
+    color: Color,
+    hand: Hand | None = None,
+    *,
+    check_uchifuzume: bool = True,
 ) -> list[Move]:
     """color の合法手を返す。hand を渡すと駒打ちの合法手も含める。
 
@@ -150,9 +181,12 @@ def generate_legal_moves(
 
     駒打ち: hand が None のときは生成しない（従来どおり盤上移動のみ。既存の呼び出しと
     完全互換にするためのデフォルト）。hand を渡したときは generate_drop_moves の各手
-    （二歩・行き所のない駒は生成側で除外済み）を、打った後に自玉が王手になるかで
-    フィルタする。盤上移動と同じ「指した後に王手か」の単一フィルタを使う。
-    打ち歩詰めは判定しない（後続の責務）。
+    （二歩・行き所のない駒は生成側で除外済み）を、打った後に自玉が王手になる手と、
+    歩打ちのうち打ち歩詰めになる手を除外する。
+
+    check_uchifuzume は打ち歩詰め判定の内部制御用。通常は True。打ち歩詰め判定は
+    相手の回避手を generate_legal_moves で数える（再帰する）ため、その相手側の呼び出しでは
+    False にして再帰を1段で止める（相手の応手がさらに打ち歩詰めかは問わないでよい）。
 
     戻り値は Move の列挙のみで、持ち駒の状態は含めない。駒取りに伴う持ち駒への加算や
     着手後の持ち駒は position_after_move が別途返すため、この関数は持たせない。
@@ -175,7 +209,10 @@ def generate_legal_moves(
             # 打った後の盤面だけで王手判定する。position_after_move は次の持ち駒も
             # 返すが、合法手列挙では使わない（戻り値に持ち駒を含めないため破棄する）
             next_board, _ = position_after_move(board, hand, color, move)
-            if not is_in_check(next_board, color):
-                legal.append(move)
+            if is_in_check(next_board, color):
+                continue  # 自玉が王手になる駒打ち（王手放置）は除外
+            if check_uchifuzume and _is_uchifuzume(next_board, move, color):
+                continue  # 打ち歩詰めは反則なので除外
+            legal.append(move)
 
     return legal

@@ -375,6 +375,67 @@ class Test駒打ちを含む合法手:
         assert Move.drop(PieceType.GOLD, 9, 9) not in legal  # 王手を解消しない打ちは除外
 
 
+def _uchifuzume_board(with_silver: bool = True) -> Board:
+    """打ち歩詰めの検証局面を作る。
+
+    1一に後手玉。先手が 1二へ歩を打つと 1一の玉に王手。玉の逃げ場（2一・2二）は
+    先手の銀（3二→2一を利かす）と金（2三→2二を利かす）で封鎖され、金は打った歩
+    （1二）も守るので玉は歩を取れない ⇒ 歩打ちが詰み＝打ち歩詰め。
+    with_silver=False にすると 2一が空くので玉が逃げられ、詰みでなくなる。
+    """
+    placements = [
+        (1, 1, Piece(Color.WHITE, PieceType.KING)),
+        (2, 3, Piece(Color.BLACK, PieceType.GOLD)),
+        (9, 9, Piece(Color.BLACK, PieceType.KING)),
+    ]
+    if with_silver:
+        placements.append((3, 2, Piece(Color.BLACK, PieceType.SILVER)))
+    return board_with(*placements)
+
+
+class Test打ち歩詰めの除外:
+    """打ち歩詰め: 歩を打って相手を詰ます手は反則なので合法手から除外する。"""
+
+    def test_打ち歩詰めになる歩打ちは除外される(self):
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        legal = generate_legal_moves(_uchifuzume_board(), Color.BLACK, hand)
+        assert Move.drop(PieceType.PAWN, 1, 2) not in legal
+
+    def test_相手が逃げられる歩打ちは除外されない(self):
+        # 2一を封じる銀を外すと玉が逃げられる。王手ではあるが詰みではないので合法
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        legal = generate_legal_moves(
+            _uchifuzume_board(with_silver=False), Color.BLACK, hand
+        )
+        assert Move.drop(PieceType.PAWN, 1, 2) in legal
+
+    def test_歩以外の駒打ちで詰ますのは反則ではない(self):
+        # 同じ詰み形でも金を打って詰ますのは合法（打ち歩詰めは歩打ちのみが対象）
+        hand = Hand()
+        hand.add(PieceType.GOLD)
+        legal = generate_legal_moves(_uchifuzume_board(), Color.BLACK, hand)
+        assert Move.drop(PieceType.GOLD, 1, 2) in legal
+
+    def test_王手にならない歩打ちは打ち歩詰め判定の対象外(self):
+        # 詰み形でも、相手玉に無関係なマスへの歩打ちは（二歩・行き所に触れなければ）合法
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        legal = generate_legal_moves(_uchifuzume_board(), Color.BLACK, hand)
+        assert Move.drop(PieceType.PAWN, 5, 5) in legal
+
+    def test_盤上移動の合法手は打ち歩詰め判定の影響を受けない(self):
+        # hand を渡しても盤上移動側の合法手は従来と一致する（駒打ちが加わるだけ）
+        board = _uchifuzume_board()
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        board_only = generate_legal_moves(board, Color.BLACK)
+        with_hand = generate_legal_moves(board, Color.BLACK, hand)
+        non_drops = [move for move in with_hand if not move.is_drop]
+        assert non_drops == board_only
+
+
 class Test駒打ちの盤面反映:
     """position_after_move（SHOGI-4c）。合法性は検証せず、盤・持ち駒へ反映するだけ。"""
 
