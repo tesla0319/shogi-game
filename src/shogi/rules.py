@@ -29,6 +29,12 @@ _PROMOTED_TYPE = {
     PieceType.ROOK: PieceType.DRAGON,
 }
 
+# 取った駒を持ち駒に加えるときの駒種変換（成駒 → 素の駒）。_PROMOTED_TYPE の逆写像。
+# 成って取られた駒（と金・成香…）は素の駒（歩・香…）として持ち駒に入る連盟ルール用。
+# 素の駒種（歩・金・角など）は変換不要なので、参照時は .get のデフォルトで自分自身を
+# 返す（この辞書には成駒6種だけを入れておく）。玉は持ち駒にできないので別途弾く。
+_UNPROMOTED_TYPE = {promoted: base for base, promoted in _PROMOTED_TYPE.items()}
+
 
 def board_after_move(board: Board, move: Move) -> Board:
     """`move` を指した後の盤面を、元の盤面を壊さずに新しく作って返す。
@@ -68,19 +74,28 @@ def position_after_move(
     """`move`（盤上移動または駒打ち）を指した後の (盤面, 手番 color の持ち駒) を、
     元の board / hand を壊さずに新しく作って返す。
 
-    盤上移動（move.is_drop が False）のときは board_after_move に委譲し、持ち駒は
-    複製をそのまま返す（この関数は取った駒を持ち駒へ加えない。駒取りに伴う持ち駒
-    への加算は別 Phase の責務）。駒打ち（move.is_drop が True）のときは、打つ駒種を
-    color の駒として move.to_file / move.to_rank に置き、hand から1枚減らす。
+    盤上移動（move.is_drop が False）のときは盤面更新を board_after_move に委譲し、
+    移動先に相手駒があればそれを取って color の持ち駒に加える。取った駒が成駒
+    （と金・成香・成桂・成銀・馬・竜）なら素の駒（歩・香・桂・銀・角・飛）として
+    加える。玉を取った場合は持ち駒に加えない（持ち駒にできないため）。
+    駒打ち（move.is_drop が True）のときは、打つ駒種を color の駒として
+    move.to_file / move.to_rank に置き、hand から1枚減らす。
 
     Position 概念は導入せず、手番は color 引数で受け取る。合法性（持ち駒が足りるか・
     打つ先が空か・二歩・行き所のない駒・打ち歩詰め・王手放置）はここでは検証しない。
     持ち駒が0枚の駒種を打つ手を渡した場合のみ、Hand.remove が ValueError を送出する。
     """
     if not move.is_drop:
-        # 盤上移動は既存関数に委譲。持ち駒は変化しないが、呼び出し側が元の hand と
-        # 参照を共有しないよう複製を返す（戻り値の扱いを is_drop で分岐させないため）。
-        return board_after_move(board, move), hand.copy()
+        # 盤面更新は既存関数に委譲。取った駒の判定は「適用前の移動先マス」を読む
+        # （board_after_move 適用後は上書き済みで取った駒が分からなくなるため）。
+        next_board = board_after_move(board, move)
+        next_hand = hand.copy()
+        captured = board.get_piece(move.to_file, move.to_rank)
+        if captured is not None and captured.piece_type is not PieceType.KING:
+            # 成駒は素の駒に戻して加える。素の駒種はそのまま（.get のデフォルト）
+            base_type = _UNPROMOTED_TYPE.get(captured.piece_type, captured.piece_type)
+            next_hand.add(base_type)
+        return next_board, next_hand
 
     next_board = board.copy()
     next_hand = hand.copy()

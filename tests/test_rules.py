@@ -520,3 +520,90 @@ class Test駒打ちの盤面反映:
             position_after_move(
                 board, hand, Color.BLACK, Move.drop(PieceType.PAWN, 5, 5)
             )
+
+
+class Test駒取りの持ち駒加算:
+    """position_after_move（SHOGI-4f）。盤上移動で取った駒を持ち駒に加える。"""
+
+    def _capture_board(self, target_type: PieceType) -> Board:
+        """2二の先手飛が 2五の後手 target_type を取れる盤を作る。"""
+        return board_with(
+            (2, 2, Piece(Color.BLACK, PieceType.ROOK)),
+            (2, 5, Piece(Color.WHITE, target_type)),
+        )
+
+    def test_取った素の駒はその駒種で持ち駒に加わる(self):
+        board = self._capture_board(PieceType.GOLD)
+        _, next_hand = position_after_move(
+            board, Hand(), Color.BLACK, Move(2, 2, 2, 5)
+        )
+        assert next_hand.count(PieceType.GOLD) == 1
+
+    @pytest.mark.parametrize(
+        "captured_type, hand_type",
+        [
+            (PieceType.PROMOTED_PAWN, PieceType.PAWN),
+            (PieceType.PROMOTED_LANCE, PieceType.LANCE),
+            (PieceType.PROMOTED_KNIGHT, PieceType.KNIGHT),
+            (PieceType.PROMOTED_SILVER, PieceType.SILVER),
+            (PieceType.HORSE, PieceType.BISHOP),
+            (PieceType.DRAGON, PieceType.ROOK),
+        ],
+        ids=["と金→歩", "成香→香", "成桂→桂", "成銀→銀", "馬→角", "竜→飛"],
+    )
+    def test_成駒を取ると素の駒として持ち駒に加わる(self, captured_type, hand_type):
+        board = self._capture_board(captured_type)
+        _, next_hand = position_after_move(
+            board, Hand(), Color.BLACK, Move(2, 2, 2, 5)
+        )
+        assert next_hand.count(hand_type) == 1
+
+    def test_取りのない移動では持ち駒は増えない(self):
+        # 空きマスへの移動。持ち駒は元のまま（増減なし）
+        board = board_with((7, 7, Piece(Color.BLACK, PieceType.PAWN)))
+        hand = Hand()
+        hand.add(PieceType.GOLD)
+        _, next_hand = position_after_move(board, hand, Color.BLACK, Move(7, 7, 7, 6))
+        assert next_hand.count(PieceType.GOLD) == 1  # 加算されていない
+        # 保持していない駒種も増えていないこと（代表として歩を確認）
+        assert next_hand.count(PieceType.PAWN) == 0
+
+    def test_成って取る手でも取った駒種で加算される(self):
+        # 取り込む駒種は「取られた駒」で決まり、指し手の成り/不成には依存しない。
+        # 2三の先手歩が 2二の後手銀を取りつつ成る手。持ち駒には銀が入る
+        board = board_with(
+            (2, 3, Piece(Color.BLACK, PieceType.PAWN)),
+            (2, 2, Piece(Color.WHITE, PieceType.SILVER)),
+        )
+        _, next_hand = position_after_move(
+            board, Hand(), Color.BLACK, Move(2, 3, 2, 2, is_promotion=True)
+        )
+        assert next_hand.count(PieceType.SILVER) == 1
+
+    def test_玉を取っても持ち駒には加えない(self):
+        # 持ち駒にできない玉を取る手でも ValueError にならず、持ち駒は増えない
+        board = board_with(
+            (2, 2, Piece(Color.BLACK, PieceType.ROOK)),
+            (2, 5, Piece(Color.WHITE, PieceType.KING)),
+        )
+        _, next_hand = position_after_move(
+            board, Hand(), Color.BLACK, Move(2, 2, 2, 5)
+        )
+        for piece_type in (
+            PieceType.PAWN,
+            PieceType.LANCE,
+            PieceType.KNIGHT,
+            PieceType.SILVER,
+            PieceType.GOLD,
+            PieceType.BISHOP,
+            PieceType.ROOK,
+        ):
+            assert next_hand.count(piece_type) == 0
+
+    def test_元のBoardとHandは変更されない(self):
+        board = self._capture_board(PieceType.ROOK)
+        hand = Hand()
+        position_after_move(board, hand, Color.BLACK, Move(2, 2, 2, 5))
+        # 元の盤の相手駒はそのまま、元の持ち駒は空のまま
+        assert board.get_piece(2, 5) == Piece(Color.WHITE, PieceType.ROOK)
+        assert hand.count(PieceType.ROOK) == 0
