@@ -5,15 +5,16 @@
 （find_king / is_attacked / is_in_check）、SHOGI-3c で合法手の確定
 （generate_legal_moves）を提供する。
 
-持ち駒・駒打ちは扱わない（SHOGI-4 の責務）。取った駒は盤から除去するだけで、
-持ち駒には加えない。取った駒種が必要な処理（持ち駒への追加）は、着手適用の
-前に移動先マスを読めば取得できるため、この関数には持たせない。
+駒打ちは SHOGI-4 で position_after_move（着手適用）と generate_legal_moves
+（合法手への統合）が扱う。ただし駒取りに伴う持ち駒への加算はここでは行わない
+（取った駒は盤から除去するだけ）。取った駒種が必要な処理（持ち駒への追加）は、
+着手適用の前に移動先マスを読めば取得できるため、これらの関数には持たせない。
 """
 
 from shogi.board import BOARD_SIZE, Board
 from shogi.hand import Hand
 from shogi.move import Move
-from shogi.movegen import generate_piece_moves
+from shogi.movegen import generate_drop_moves, generate_piece_moves
 from shogi.piece import Color, Piece, PieceType
 
 # 成る前の駒種 → 成った後の駒種。board_after_move で is_promotion=True の手を
@@ -137,17 +138,25 @@ def is_in_check(board: Board, color: Color) -> bool:
     return is_attacked(board, king_file, king_rank, opponent)
 
 
-def generate_legal_moves(board: Board, color: Color) -> list[Move]:
-    """color の合法手（盤上移動のみ）を返す。
+def generate_legal_moves(
+    board: Board, color: Color, hand: Hand | None = None
+) -> list[Move]:
+    """color の合法手を返す。hand を渡すと駒打ちの合法手も含める。
 
-    盤上の color の各駒の疑似合法手（movegen.generate_piece_moves、成り込み）
-    から、指した後に自玉が王手になる手を除外したものが合法手。
-    「指した後に王手か」の単一フィルタで、王手放置・自殺手・ピンによる自己王手を
-    まとめて除外する（王手中かどうかで処理を分けない）。王手駒を取る手・合駒で
-    遮る手は王手が解消されるので自然に残る。
+    盤上移動: 盤上の color の各駒の疑似合法手（movegen.generate_piece_moves、
+    成り込み）から、指した後に自玉が王手になる手を除外する。「指した後に王手か」の
+    単一フィルタで、王手放置・自殺手・ピンによる自己王手をまとめて除外する（王手中か
+    どうかで処理を分けない）。王手駒を取る手・合駒で遮る手は王手が解消されるので残る。
 
-    持ち駒・駒打ちは扱わない（SHOGI-4）。手番は color 引数で受け取り、
-    Position 概念は導入しない。
+    駒打ち: hand が None のときは生成しない（従来どおり盤上移動のみ。既存の呼び出しと
+    完全互換にするためのデフォルト）。hand を渡したときは generate_drop_moves の各手
+    （二歩・行き所のない駒は生成側で除外済み）を、打った後に自玉が王手になるかで
+    フィルタする。盤上移動と同じ「指した後に王手か」の単一フィルタを使う。
+    打ち歩詰めは判定しない（後続の責務）。
+
+    戻り値は Move の列挙のみで、持ち駒の状態は含めない。駒取りに伴う持ち駒への加算や
+    着手後の持ち駒は position_after_move が別途返すため、この関数は持たせない。
+    手番は color、持ち駒は hand 引数で受け取り、Position 概念は導入しない。
     """
     legal = []
     for rank in range(1, BOARD_SIZE + 1):
@@ -159,4 +168,14 @@ def generate_legal_moves(board: Board, color: Color) -> list[Move]:
                 next_board = board_after_move(board, move)
                 if not is_in_check(next_board, color):
                     legal.append(move)
+
+    # hand 未指定なら駒打ちは一切生成しない（従来挙動を1バイトも変えない）
+    if hand is not None:
+        for move in generate_drop_moves(board, hand, color):
+            # 打った後の盤面だけで王手判定する。position_after_move は次の持ち駒も
+            # 返すが、合法手列挙では使わない（戻り値に持ち駒を含めないため破棄する）
+            next_board, _ = position_after_move(board, hand, color, move)
+            if not is_in_check(next_board, color):
+                legal.append(move)
+
     return legal

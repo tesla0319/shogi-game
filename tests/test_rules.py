@@ -325,6 +325,56 @@ class Test自殺手の除外:
         assert Move(5, 5, 5, 6) in legal  # 利きの無い方へ逃げる手は合法
 
 
+class Test駒打ちを含む合法手:
+    """generate_legal_moves に hand を渡したときの駒打ち統合（SHOGI-4）。"""
+
+    def test_hand未指定なら駒打ちは一切含まれない(self):
+        # 持ち駒があっても hand を渡さなければ従来どおり盤上移動のみ（既存互換）
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.KING)),
+            (5, 1, Piece(Color.WHITE, PieceType.KING)),
+        )
+        legal = generate_legal_moves(board, Color.BLACK)
+        assert all(not move.is_drop for move in legal)
+
+    def test_hand_Noneは引数省略と完全に同じ結果(self):
+        board = board_from_sfen(_HIRATE_SFEN)
+        assert generate_legal_moves(
+            board, Color.BLACK, None
+        ) == generate_legal_moves(board, Color.BLACK)
+
+    def test_持ち駒があると駒打ちの合法手が加わる(self):
+        # 玉2枚だけの盤。空きマスは 81-2=79。金は二歩・行き所・自玉王手のいずれにも
+        # かからないので 79 マス全てが駒打ちの合法手になる
+        board = board_with(
+            (5, 9, Piece(Color.BLACK, PieceType.KING)),
+            (5, 1, Piece(Color.WHITE, PieceType.KING)),
+        )
+        hand = Hand()
+        hand.add(PieceType.GOLD)
+        board_only = generate_legal_moves(board, Color.BLACK)
+        with_hand = generate_legal_moves(board, Color.BLACK, hand)
+        drops = [move for move in with_hand if move.is_drop]
+        non_drops = [move for move in with_hand if not move.is_drop]
+        assert len(drops) == 79
+        # 盤上移動の合法手は hand の有無で変わらない（駒打ちが「加わる」だけ）
+        assert non_drops == board_only
+
+    def test_自玉が王手のとき合駒の駒打ちだけが残る(self):
+        # 5五先手玉に 5一後手飛が王手。5筋の間（5二〜5四）へ金を打てば合駒で解消。
+        # 王手を解消しないマスへの駒打ちは王手放置として除外される
+        board = board_with(
+            (5, 5, Piece(Color.BLACK, PieceType.KING)),
+            (5, 1, Piece(Color.WHITE, PieceType.ROOK)),
+        )
+        hand = Hand()
+        hand.add(PieceType.GOLD)
+        legal = generate_legal_moves(board, Color.BLACK, hand)
+        assert Move.drop(PieceType.GOLD, 5, 3) in legal  # 合駒で王手を遮る
+        assert Move.drop(PieceType.GOLD, 5, 2) in legal  # 別の合駒位置
+        assert Move.drop(PieceType.GOLD, 9, 9) not in legal  # 王手を解消しない打ちは除外
+
+
 class Test駒打ちの盤面反映:
     """position_after_move（SHOGI-4c）。合法性は検証せず、盤・持ち駒へ反映するだけ。"""
 
