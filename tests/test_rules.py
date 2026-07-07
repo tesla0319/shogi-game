@@ -9,6 +9,7 @@ board_after_move が「ある手を指した後の盤面」を、取り・成り
 import pytest
 
 from shogi.board import Board
+from shogi.hand import Hand
 from shogi.move import Move
 from shogi.piece import Color, Piece, PieceType
 from shogi.rules import (
@@ -17,6 +18,7 @@ from shogi.rules import (
     generate_legal_moves,
     is_attacked,
     is_in_check,
+    position_after_move,
 )
 from shogi.sfen import board_from_sfen
 
@@ -321,3 +323,89 @@ class Test自殺手の除外:
         legal = generate_legal_moves(board, Color.BLACK)
         assert Move(5, 5, 5, 4) not in legal  # 飛の利き（4段目）へ飛び込む自殺手
         assert Move(5, 5, 5, 6) in legal  # 利きの無い方へ逃げる手は合法
+
+
+class Test駒打ちの盤面反映:
+    """position_after_move（SHOGI-4c）。合法性は検証せず、盤・持ち駒へ反映するだけ。"""
+
+    def test_盤上移動はboard_after_move相当になる(self):
+        board = board_with((7, 7, Piece(Color.BLACK, PieceType.PAWN)))
+        hand = Hand()
+        move = Move(7, 7, 7, 6)
+        next_board, next_hand = position_after_move(board, hand, Color.BLACK, move)
+        expected = board_after_move(board, move)
+        # 全マスが board_after_move の結果と一致すること
+        for rank in range(1, 10):
+            for file in range(1, 10):
+                assert next_board.get_piece(file, rank) == expected.get_piece(
+                    file, rank
+                )
+
+    def test_駒打ちで盤面に指定駒が置かれる(self):
+        board = Board()
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        next_board, _ = position_after_move(
+            board, hand, Color.BLACK, Move.drop(PieceType.PAWN, 5, 5)
+        )
+        assert next_board.get_piece(5, 5) == Piece(Color.BLACK, PieceType.PAWN)
+
+    def test_後手の駒打ちは後手の駒になる(self):
+        board = Board()
+        hand = Hand()
+        hand.add(PieceType.SILVER)
+        next_board, _ = position_after_move(
+            board, hand, Color.WHITE, Move.drop(PieceType.SILVER, 3, 3)
+        )
+        assert next_board.get_piece(3, 3) == Piece(Color.WHITE, PieceType.SILVER)
+
+    def test_駒打ちでHandが1枚減る(self):
+        board = Board()
+        hand = Hand()
+        hand.add(PieceType.GOLD, 2)
+        _, next_hand = position_after_move(
+            board, hand, Color.BLACK, Move.drop(PieceType.GOLD, 5, 5)
+        )
+        assert next_hand.count(PieceType.GOLD) == 1
+
+    def test_複数駒種の代表例(self):
+        # 歩・桂・飛の3種で「盤に置かれ、持ち駒が減る」ことを確認する
+        for piece_type in (PieceType.PAWN, PieceType.KNIGHT, PieceType.ROOK):
+            board = Board()
+            hand = Hand()
+            hand.add(piece_type)
+            next_board, next_hand = position_after_move(
+                board, hand, Color.BLACK, Move.drop(piece_type, 5, 5)
+            )
+            assert next_board.get_piece(5, 5) == Piece(Color.BLACK, piece_type)
+            assert next_hand.count(piece_type) == 0
+
+    def test_元のBoardとHandは変更されない(self):
+        board = Board()
+        hand = Hand()
+        hand.add(PieceType.PAWN)
+        position_after_move(
+            board, hand, Color.BLACK, Move.drop(PieceType.PAWN, 5, 5)
+        )
+        # 元の盤面は空のまま、元の持ち駒は1枚のまま
+        assert board.get_piece(5, 5) is None
+        assert hand.count(PieceType.PAWN) == 1
+
+    def test_盤上移動でも元のHandは共有されない(self):
+        # 盤上移動でも戻り値の hand は複製で、後から増減しても元に影響しないこと
+        board = board_with((7, 7, Piece(Color.BLACK, PieceType.PAWN)))
+        hand = Hand()
+        _, next_hand = position_after_move(
+            board, hand, Color.BLACK, Move(7, 7, 7, 6)
+        )
+        next_hand.add(PieceType.PAWN)
+        assert hand.count(PieceType.PAWN) == 0
+
+    def test_持ち駒が無い駒を打つとValueError(self):
+        # 合法性チェックはしないが、Hand.remove の枚数不足ガードは働く
+        board = Board()
+        hand = Hand()
+        with pytest.raises(ValueError):
+            position_after_move(
+                board, hand, Color.BLACK, Move.drop(PieceType.PAWN, 5, 5)
+            )

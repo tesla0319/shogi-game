@@ -11,6 +11,7 @@
 """
 
 from shogi.board import BOARD_SIZE, Board
+from shogi.hand import Hand
 from shogi.move import Move
 from shogi.movegen import generate_piece_moves
 from shogi.piece import Color, Piece, PieceType
@@ -58,6 +59,34 @@ def board_after_move(board: Board, move: Move) -> Board:
     # 移動先に相手駒があれば上書き＝取り（味方駒のマスへは movegen が手を作らない）
     next_board.set_piece(move.to_file, move.to_rank, moved)
     return next_board
+
+
+def position_after_move(
+    board: Board, hand: Hand, color: Color, move: Move
+) -> tuple[Board, Hand]:
+    """`move`（盤上移動または駒打ち）を指した後の (盤面, 手番 color の持ち駒) を、
+    元の board / hand を壊さずに新しく作って返す。
+
+    盤上移動（move.is_drop が False）のときは board_after_move に委譲し、持ち駒は
+    複製をそのまま返す（この関数は取った駒を持ち駒へ加えない。駒取りに伴う持ち駒
+    への加算は別 Phase の責務）。駒打ち（move.is_drop が True）のときは、打つ駒種を
+    color の駒として move.to_file / move.to_rank に置き、hand から1枚減らす。
+
+    Position 概念は導入せず、手番は color 引数で受け取る。合法性（持ち駒が足りるか・
+    打つ先が空か・二歩・行き所のない駒・打ち歩詰め・王手放置）はここでは検証しない。
+    持ち駒が0枚の駒種を打つ手を渡した場合のみ、Hand.remove が ValueError を送出する。
+    """
+    if not move.is_drop:
+        # 盤上移動は既存関数に委譲。持ち駒は変化しないが、呼び出し側が元の hand と
+        # 参照を共有しないよう複製を返す（戻り値の扱いを is_drop で分岐させないため）。
+        return board_after_move(board, move), hand.copy()
+
+    next_board = board.copy()
+    next_hand = hand.copy()
+    dropped = Piece(color, move.drop_piece_type)
+    next_board.set_piece(move.to_file, move.to_rank, dropped)
+    next_hand.remove(move.drop_piece_type)
+    return next_board, next_hand
 
 
 def find_king(board: Board, color: Color) -> tuple[int, int] | None:

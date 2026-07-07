@@ -37,6 +37,16 @@ class Hand:
         # 生成直後は持ち駒なし。保持できる駒種を 0 枚で初期化しておく
         self._counts: dict[PieceType, int] = {pt: 0 for pt in _HAND_PIECE_TYPES}
 
+    def copy(self) -> "Hand":
+        """持ち駒の複製を返す。元の Hand と枚数を共有しない。
+
+        Board.copy() と対をなす。着手適用（駒打ち・駒取り）で「ある手を指した後の
+        持ち駒」を、元の Hand を壊さずに作るために使う。
+        """
+        clone = Hand()
+        clone._counts = dict(self._counts)
+        return clone
+
     def count(self, piece_type: PieceType) -> int:
         """指定駒種の所持枚数を返す。"""
         self._validate_type(piece_type)
