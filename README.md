@@ -6,14 +6,15 @@
 
 ## 現在の状態
 
-**SHOGI-4（対局進行・人対人CLI対局）完了（4a〜4m）/ 次は SHOGI-5（AI v1 + 人対AI）**
+**SHOGI-5（AI v1 + 人対AI）MVP完了（5a・5b）/ 次フェーズは未確定**
 
 - SHOGI-0（設計）: 完了 — CLAUDE.md / Skill / 開発計画の土台
 - SHOGI-1（データモデル + SFEN入出力）: 完了 — Piece / Board / 平手初期局面 / SFEN盤面部の読み書き
 - SHOGI-2（駒の移動生成）: 完了 — 全14駒種の疑似合法手と成り/不成の候補生成
 - SHOGI-3（合法手判定・盤上移動）: 完了 — 王手検出と「自玉が王手なら除外」フィルタで王手放置・自殺手・ピンを除外
 - SHOGI-4（対局進行）: 完了（4a〜4m）— 持ち駒（Hand）・駒打ち（Move.drop）・駒打ち候補生成・二歩/行き所のない駒/打ち歩詰めの除外・合法手への統合・駒取り時の持ち駒加算。USI指し手表記と Move の相互変換（`move_from_usi` / `move_to_usi`。通常手・成り手・駒打ちに対応、形式変換のみで合法性は判定しない）。局面のテキスト表示（`position_to_text`。盤面・両者持ち駒・手番を可読な文字列にする純関数）。盤面・両者の持ち駒・手番を保持する `Position` を追加し、`apply_move()` で状態を壊さず次局面へ遷移（合法性と終局判定は Position の責務外）。人対人の CLI 対局ループ（`cli.py` の `run_game`。`python -m shogi` で起動、USI入力と `resign` に対応）。合法手0件で自動終局（王手中なら詰み・相手勝ち、そうでなければ合法手なし・手番側の負け）。千日手・持将棋・入玉宣言は対象外
-- 詳細と制限事項は [docs/development-plan.md](docs/development-plan.md) の「SHOGI-4 の実施内訳」を参照
+- SHOGI-5（AI v1 + 人対AI）: MVP完了（5a・5b）— 合法手から手を選ぶランダムAI（`ai.py` の `choose_move`）と、人先手・AI後手の CLI 対局（`run_game` に `ai_side` / `rng` を追加）。AI の着手は USI 形式で表示。詰み・合法手なしで既存処理により終局。`ai_side=None` で従来の人対人モードも維持。簡易評価・探索は対象外
+- 詳細と制限事項は [docs/development-plan.md](docs/development-plan.md) の「SHOGI-4 / SHOGI-5 の実施内訳」を参照
 
 ## ドキュメント構成
 
@@ -34,5 +35,5 @@
 ## セットアップ / 実行方法
 
 - 必要環境: Python 3.12 / pytest（いずれもローカルに導入済みであること）
-- テスト全実行: `python3 -m pytest`
-- 人対人の CLI 対局: `PYTHONPATH=src python3 -m shogi`（USI形式で指し手を入力、`resign` で投了。自動終局判定は未実装）
+- テスト全実行: `python3 -m pytest`（全614件 green）
+- 人対AIの CLI 対局: `PYTHONPATH=src python3 -m shogi`（人間先手・AI後手で開始。USI形式で指し手を入力、`resign` で投了。AI は合法手からランダムに選び、着手を USI 形式で表示する）

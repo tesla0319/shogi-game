@@ -1,15 +1,18 @@
-"""CLI 対局ループ（SHOGI-4l）と自動終局判定（SHOGI-4m）のテスト。
+"""CLI 対局ループ（SHOGI-4l）・自動終局判定（SHOGI-4m）・人対AI接続（SHOGI-5b）のテスト。
 
 run_game に入出力を注入し、投了・入力終了（EOF）・不正入力・非合法手・正常な着手・
-自動終局（詰み／合法手なし／着手後の詰み）の各フローを検証する。
+自動終局（詰み／合法手なし／着手後の詰み）・人対AI（AI手番の自動着手）の各フローを検証する。
 標準入出力を使わず、入力はキュー、出力は収集リストで再現する。
 """
+
+import random
 
 from shogi.cli import run_game
 from shogi.hand import Hand
 from shogi.piece import Color
 from shogi.position import Position
 from shogi.sfen import board_from_sfen
+from shogi.usi import move_from_usi
 
 
 def make_io(lines):
@@ -165,3 +168,69 @@ class TestCheckmateAfterMove:
         run_game(input_fn, output_fn, start_position=pos)
         text = joined(outputs)
         assert "後手は詰みです。先手の勝ちです。" in text
+
+
+class TestHumanVsAI:
+    """ai_side を渡したときの人対AI進行（SHOGI-5b）。既定は人先手・AI後手。"""
+
+    def test_人の着手後にAIが自動で指す(self):
+        # 先手（人）7g7f → 後手（AI）が自動着手 → 先手（人）resign で終局
+        input_fn, output_fn, outputs = make_io(["7g7f", "resign"])
+        run_game(input_fn, output_fn, ai_side=Color.WHITE, rng=random.Random(0))
+        text = joined(outputs)
+        assert "後手AI: " in text  # AI が自動で指した
+        assert "先手が投了しました。後手の勝ちです。" in text  # 人の手番に戻り投了できた
+
+    def test_AI手番は人の入力を消費しない(self):
+        # 入力キューは人の2手番（7g7f と resign）分だけ。AI が入力を消費すると
+        # 2手目の resign が AI 手番で消え、次の人手番で EOF になってしまう。
+        calls = {"n": 0}
+        queue = iter(["7g7f", "resign"])
+        outputs = []
+
+        def input_fn():
+            calls["n"] += 1
+            try:
+                return next(queue)
+            except StopIteration:
+                raise EOFError
+
+        def output_fn(text):
+            outputs.append(text)
+
+        run_game(input_fn, output_fn, ai_side=Color.WHITE, rng=random.Random(0))
+        text = "\n".join(outputs)
+        assert calls["n"] == 2  # 人の2手番でのみ入力を求めた
+        assert "入力が終了したため" not in text  # EOF に落ちていない
+        assert "先手が投了しました。後手の勝ちです。" in text
+
+    def test_AIの手はUSI形式で表示される(self):
+        input_fn, output_fn, outputs = make_io(["7g7f", "resign"])
+        run_game(input_fn, output_fn, ai_side=Color.WHITE, rng=random.Random(0))
+        ai_lines = [o for o in outputs if o.startswith("後手AI: ")]
+        assert ai_lines, "AI の着手表示が見つからない"
+        usi = ai_lines[-1].removeprefix("後手AI: ")
+        move_from_usi(usi)  # USI として解釈できる（不正なら ValueError で失敗する）
+
+    def test_AI着手後は人の手番に戻る(self):
+        # 初期表示（先手）＋ AI 着手後の表示（先手）で「手番: 先手」の局面が2回以上出る
+        input_fn, output_fn, outputs = make_io(["7g7f", "resign"])
+        run_game(input_fn, output_fn, ai_side=Color.WHITE, rng=random.Random(0))
+        black_renders = [o for o in outputs if "手番: 先手" in o]
+        assert len(black_renders) >= 2
+
+    def test_同じシードならAIの手は再現する(self):
+        in1, out1, outputs1 = make_io(["7g7f", "resign"])
+        run_game(in1, out1, ai_side=Color.WHITE, rng=random.Random(0))
+        in2, out2, outputs2 = make_io(["7g7f", "resign"])
+        run_game(in2, out2, ai_side=Color.WHITE, rng=random.Random(0))
+        assert outputs1 == outputs2
+
+    def test_ai_sideがNoneなら従来の人対人を維持する(self):
+        # 明示的に ai_side=None。AI 分岐を通らず、両手番とも人の入力で進む
+        input_fn, output_fn, outputs = make_io(["7g7f", "resign"])
+        run_game(input_fn, output_fn, ai_side=None)
+        text = joined(outputs)
+        assert "AI" not in text  # AI 表示は一切出ない
+        # 先手 7g7f → 後手（人）resign → 先手の勝ち
+        assert "後手が投了しました。先手の勝ちです。" in text

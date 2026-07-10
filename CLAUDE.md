@@ -9,7 +9,7 @@
 
 - プロダクト名: shogi-ai
 - 一言でいうと: 将棋の対局ができるゲーム。まずCLIで人対人・人対AIの対局を実現し、GUIは後続Phaseで扱う
-- 現在のフェーズ: SHOGI-1〜4（対局進行・人対人CLI対局。4a〜4m）まで完了。次は SHOGI-5（AI v1 + 人対AI）
+- 現在のフェーズ: SHOGI-1〜5（AI v1 + 人対AI の MVP。5a・5b）まで完了。次フェーズは未確定（簡易評価AI・探索は未着手）
 - 対象ユーザー: 開発者本人（学習・趣味目的）（要確認）
 
 ## 技術スタック【固有】
@@ -77,6 +77,7 @@ shogi-ai/
 - 対局状態は `position.py` の `Position`（frozen dataclass）へ集約する。保持するのは盤面・両者の持ち駒・手番だけ。着手適用は `Position.apply_move()` を使い、元の局面を壊さず次局面を返す。Position では合法性・終局・履歴を判定・保持しない（呼び出し側の責務）
 - CLI 対局ループは `cli.py` の `run_game(input_fn, output_fn)` へ集約する。入力・出力は注入可能にして対局ロジックを標準入出力から分離する（テスト可能性のため）。CLI 起動方法は `python -m shogi`（`__main__.py`）
 - 終局判定は入力受付の前に行う（手番側の合法手が0件かで判定）。合法手生成・王手判定は `rules.py` の既存関数（`generate_legal_moves` / `is_in_check`）へ委譲し、CLI 層は新しい判定ロジックを持たない。勝敗は表示するのみで `Position` へは保持しない
+- AI の手選択は `ai.py` へ集約する。AI は生成済みの合法手から選ぶだけで、合法手生成は行わない（呼び出し側が渡す）。乱数は `random.Random` を注入する。CLI への AI 接続は `run_game()` の `ai_side` / `rng` で行い、`ai_side=None` では人対人モードを維持する
 
 ## テスト方針【共通】
 

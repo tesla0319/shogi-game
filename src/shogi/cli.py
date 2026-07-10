@@ -16,11 +16,14 @@ input / print だが、テストでは行のキューと収集リストを渡し
 （対局ロジックを標準入出力から切り離してテスト可能にするため）。
 """
 
+import random
+
+from shogi.ai import choose_move
 from shogi.display import position_to_text
 from shogi.piece import Color
 from shogi.position import Position, create_hirate_position
 from shogi.rules import generate_legal_moves, is_in_check
-from shogi.usi import move_from_usi
+from shogi.usi import move_from_usi, move_to_usi
 
 # 投了として受け付ける入力（完全一致のみ）。表記ゆれは受け付けない
 _RESIGN_INPUT = "resign"
@@ -36,6 +39,7 @@ _MSG_RESIGN = "{loser}が投了しました。{winner}の勝ちです。"
 _MSG_EOF = "入力が終了したため、対局を終了します。"
 _MSG_CHECKMATE = "{loser}は詰みです。{winner}の勝ちです。"
 _MSG_NO_MOVES = "{loser}に合法手がありません。{winner}の勝ちです。"
+_MSG_AI_MOVE = "{side}AI: {usi}"
 
 
 def _opponent(color: Color) -> Color:
@@ -62,20 +66,37 @@ def _render(position: Position) -> str:
     )
 
 
-def run_game(input_fn=input, output_fn=print, start_position: Position | None = None) -> None:
-    """人対人の CLI 対局を1局進める。
+def run_game(
+    input_fn=input,
+    output_fn=print,
+    start_position: Position | None = None,
+    ai_side: Color | None = None,
+    rng: random.Random | None = None,
+) -> None:
+    """CLI 対局を1局進める。既定は人対人、ai_side を渡すとその手番を AI が指す。
 
     既定では平手初期局面から開始する（start_position を渡すとその局面から始める。
     詰み・行き詰まりなど任意局面から動作を確かめるためのフックで、既定は None）。
-    各手番では、入力を求める前に手番側の合法手を生成し、0件なら自動終局する
-    （王手中なら詰みで相手の勝ち、そうでなければ合法手なしで手番側の負け）。
-    合法手があれば手番側に1手入力させる。`resign` で投了、入力終了（input_fn が
+    各手番では、まず手番側の合法手を生成し、0件なら自動終局する（王手中なら詰みで
+    相手の勝ち、そうでなければ合法手なしで手番側の負け）。
+
+    ai_side にその手番の色を渡すと、その手番では人間の入力を求めず、生成済みの
+    合法手から AI（ai.choose_move）が1手を選んで指し、指した手を USI で表示する。
+    ai_side が None（既定）のときは AI 分岐を一切通らず、従来の人対人と同一挙動になる。
+    AI の乱数は rng（random.Random）を使う。ai_side を渡して rng を省略した場合は
+    その場で新しい random.Random() を作る（再現性が要るテストでは rng を渡す）。
+
+    人間の手番では手番側に1手入力させる。`resign` で投了、入力終了（input_fn が
     EOFError を送出）で中断する。USI 形式として解釈できない入力・非合法手はメッセージを
     出して同じ手番のまま再入力を求める（局面・手番は変えない）。
 
     input_fn は1行を返す呼び出し可能オブジェクト（EOF では EOFError を送出する）。
     output_fn は1行を受け取る呼び出し可能オブジェクト。既定は組み込みの input / print。
     """
+    # AI を使うのに rng が無ければ、その場で用意する（人対人では乱数を作らない）
+    if ai_side is not None and rng is None:
+        rng = random.Random()
+
     position = (
         start_position if start_position is not None else create_hirate_position()
     )
@@ -100,6 +121,15 @@ def run_game(input_fn=input, output_fn=print, start_position: Position | None = 
                 )
             )
             return
+
+        # AI の手番: 入力は求めず、生成済みの合法手から1手選んで指す。
+        # 合法手は上で生成済みのものをそのまま渡す（AI 側では生成しない）。
+        if side is ai_side:
+            move = choose_move(legal_moves, rng)
+            output_fn(_MSG_AI_MOVE.format(side=_SIDE_LABELS[side], usi=move_to_usi(move)))
+            position = position.apply_move(move)
+            output_fn(_render(position))
+            continue
 
         output_fn(_MSG_PROMPT.format(side=_SIDE_LABELS[side]))
 
