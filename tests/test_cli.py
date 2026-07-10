@@ -1,10 +1,15 @@
-"""CLI 対局ループ（SHOGI-4l）のテスト。
+"""CLI 対局ループ（SHOGI-4l）と自動終局判定（SHOGI-4m）のテスト。
 
-run_game に入出力を注入し、投了・入力終了（EOF）・不正入力・非合法手・正常な着手の
-各フローを検証する。標準入出力を使わず、入力はキュー、出力は収集リストで再現する。
+run_game に入出力を注入し、投了・入力終了（EOF）・不正入力・非合法手・正常な着手・
+自動終局（詰み／合法手なし／着手後の詰み）の各フローを検証する。
+標準入出力を使わず、入力はキュー、出力は収集リストで再現する。
 """
 
 from shogi.cli import run_game
+from shogi.hand import Hand
+from shogi.piece import Color
+from shogi.position import Position
+from shogi.sfen import board_from_sfen
 
 
 def make_io(lines):
@@ -115,3 +120,48 @@ class TestInitialDisplay:
         text = joined(outputs)
         assert "手番: 先手" in text  # 初期局面表示に含まれる
         assert "先手の手を入力してください（USI形式、投了は resign）:" in text
+
+
+class TestCheckmateTermination:
+    """合法手0件かつ王手中 → 詰みで相手の勝ち（SHOGI-4m）。"""
+
+    def test_開始局面が詰みなら入力を求めず終局する(self):
+        # 5一後手玉／5二先手金／5九先手香。後手玉は詰み（王手・逃げ場なし・金は香に守られ取れない）
+        #   5b の金は 5a を王手し、逃げ場 4a/6a/4b/6b をすべて利かせる。
+        #   玉が 5b の金を取ると 5i の香に取られるため取れない → 詰み。後手番。
+        board = board_from_sfen("4k4/4G4/9/9/9/9/9/9/4L4")
+        pos = Position(board, Hand(), Hand(), Color.WHITE)
+        input_fn, output_fn, outputs = make_io([])  # 入力しない（求められないはず）
+        run_game(input_fn, output_fn, start_position=pos)
+        text = joined(outputs)
+        assert "後手は詰みです。先手の勝ちです。" in text
+        # 詰みなので手番側（後手）へのプロンプトは出ない
+        assert "後手の手を入力してください（USI形式、投了は resign）:" not in text
+
+
+class TestNoLegalMovesTermination:
+    """合法手0件かつ王手なし → 合法手なしで手番側の負け（SHOGI-4m）。"""
+
+    def test_ステイルメイトは手番側の負けで終局する(self):
+        # 1一後手玉のみ。3二先手金が2一/2二を、2三先手金が1二/2二を利かせる。
+        #   玉は王手されていないが 2a/1b/2b すべて相手の利きで動けない → 合法手なし。後手番。
+        board = board_from_sfen("8k/6G2/7G1/9/9/9/9/9/9")
+        pos = Position(board, Hand(), Hand(), Color.WHITE)
+        input_fn, output_fn, outputs = make_io([])
+        run_game(input_fn, output_fn, start_position=pos)
+        text = joined(outputs)
+        assert "後手に合法手がありません。先手の勝ちです。" in text
+        assert "後手は詰みです" not in text  # 王手ではないので「詰み」表記にはしない
+
+
+class TestCheckmateAfterMove:
+    """着手後に相手が詰めば、その手番でプロンプトを出さず自動終局する（SHOGI-4m）。"""
+
+    def test_詰ます手を指すと相手番で自動終局する(self):
+        # 5一後手玉／5三先手金／5九先手香。先手が 5c5b と金を上がると後手が詰む。
+        board = board_from_sfen("4k4/9/4G4/9/9/9/9/9/4L4")
+        pos = Position(board, Hand(), Hand(), Color.BLACK)
+        input_fn, output_fn, outputs = make_io(["5c5b"])  # 詰ます手のみ入力
+        run_game(input_fn, output_fn, start_position=pos)
+        text = joined(outputs)
+        assert "後手は詰みです。先手の勝ちです。" in text
