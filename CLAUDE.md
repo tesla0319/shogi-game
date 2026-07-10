@@ -9,7 +9,7 @@
 
 - プロダクト名: shogi-ai
 - 一言でいうと: 将棋の対局ができるゲーム。まずCLIで人対人・人対AIの対局を実現し、GUIは後続Phaseで扱う
-- 現在のフェーズ: SHOGI-1〜3 と SHOGI-4a〜4k（駒打ち基盤 + USI指し手変換 + 局面表示 + 対局状態管理）まで完了。次は SHOGI-4 の対局進行本体（CLI対局ループ・終局判定）
+- 現在のフェーズ: SHOGI-1〜3 と SHOGI-4a〜4l（駒打ち基盤 + USI指し手変換 + 局面表示 + 対局状態管理 + CLI対局ループ）まで完了。次は SHOGI-4 の自動終局判定
 - 対象ユーザー: 開発者本人（学習・趣味目的）（要確認）
 
 ## 技術スタック【固有】
@@ -50,7 +50,7 @@ shogi-ai/
 
 <!-- 動作確認済みのものだけ書く -->
 - テスト全実行: `python3 -m pytest`（動作確認済み: Python 3.12.3 / pytest 9.0.3）
-- 起動: （Phase 4 で追記。CLI 対局の起動コマンド）
+- 人対人の CLI 対局起動: `PYTHONPATH=src python3 -m shogi`（USI形式で入力、`resign` で投了）
 
 ## 開発方針【共通】
 
@@ -75,6 +75,7 @@ shogi-ai/
 - 指し手の外部表記（USI）と Move の相互変換は `usi.py` に集約する（Board と SFEN を相互変換する `sfen.py` と対をなす役割分担）。USI 変換は表記の形だけを扱い、盤面上の合法性は判定しない
 - 局面の表示は `display.py` の純関数（`position_to_text`）に集約する。print はせず文字列を返すだけ（表示先は呼び出し側が決める）。駒文字は SFEN に合わせ、盤の向きは先手視点固定
 - 対局状態は `position.py` の `Position`（frozen dataclass）へ集約する。保持するのは盤面・両者の持ち駒・手番だけ。着手適用は `Position.apply_move()` を使い、元の局面を壊さず次局面を返す。Position では合法性・終局・履歴を判定・保持しない（呼び出し側の責務）
+- CLI 対局ループは `cli.py` の `run_game(input_fn, output_fn)` へ集約する。入力・出力は注入可能にして対局ロジックを標準入出力から分離する（テスト可能性のため）。CLI 起動方法は `python -m shogi`（`__main__.py`）
 
 ## テスト方針【共通】
 
